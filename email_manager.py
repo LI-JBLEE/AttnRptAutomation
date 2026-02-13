@@ -30,6 +30,23 @@ def clean_display_name(full_name):
     return name
 
 
+def plain_text_to_html(text):
+    """Convert plain text to HTML email body with Calibri font styling."""
+    import html as html_module
+    escaped = html_module.escape(text)
+    # Convert paragraphs (double newlines) to <p> tags, single newlines to <br>
+    paragraphs = escaped.split('\n\n')
+    html_paragraphs = []
+    for p in paragraphs:
+        p = p.replace('\n', '<br>\n')
+        html_paragraphs.append(f'<p>{p}</p>')
+    body = '\n\n'.join(html_paragraphs)
+    return (
+        '<html>\n<body style="font-family: Calibri, Arial, sans-serif; '
+        f'font-size: 11pt; color: #333;">\n{body}\n</body>\n</html>'
+    )
+
+
 def get_email_subject(fiscal_year="FY26"):
     """Generate email subject with fiscal year."""
     return f"{fiscal_year} Attainment Report - {{manager_name}}"
@@ -116,14 +133,36 @@ def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
 
 
 def create_draft(outlook, to_email, manager_name, attachment_path,
-                 target_folder=None, fiscal_year="FY26"):
-    """Create a single Outlook draft email with the report attached."""
+                 target_folder=None, fiscal_year="FY26",
+                 subject_template=None, body_text=None):
+    """Create a single Outlook draft email with the report attached.
+
+    Args:
+        subject_template: Custom subject with {manager_name}/{fiscal_year} placeholders.
+                         If None, uses default template.
+        body_text: Custom plain text body with {manager_name}/{fiscal_year} placeholders.
+                  If None, uses default HTML template.
+    """
     mail = outlook.CreateItem(0)  # olMailItem
     mail.To = to_email
-    subject_template = get_email_subject(fiscal_year)
-    html_template = get_email_html(fiscal_year)
-    mail.Subject = subject_template.format(manager_name=manager_name)
-    mail.HTMLBody = html_template.format(manager_name=manager_name)
+
+    # Subject
+    if subject_template is not None:
+        mail.Subject = subject_template.format(
+            manager_name=manager_name, fiscal_year=fiscal_year)
+    else:
+        subj = get_email_subject(fiscal_year)
+        mail.Subject = subj.format(manager_name=manager_name)
+
+    # Body
+    if body_text is not None:
+        filled = body_text.format(
+            manager_name=manager_name, fiscal_year=fiscal_year)
+        mail.HTMLBody = plain_text_to_html(filled)
+    else:
+        html_template = get_email_html(fiscal_year)
+        mail.HTMLBody = html_template.format(manager_name=manager_name)
+
     mail.Attachments.Add(os.path.abspath(attachment_path))
     mail.Save()  # Save as Draft — does NOT send
 
@@ -133,7 +172,8 @@ def create_draft(outlook, to_email, manager_name, attachment_path,
 
 
 def create_drafts_batch(matched_list, target_folder_name="Manager Report",
-                        progress_callback=None, fiscal_year="FY26"):
+                        progress_callback=None, fiscal_year="FY26",
+                        subject_template=None, body_text=None):
     """Create Outlook drafts for a list of matched managers."""
     import win32com.client
     outlook = win32com.client.Dispatch("Outlook.Application")
@@ -146,7 +186,8 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
 
     for i, (filepath, clean_name, email) in enumerate(matched_list, 1):
         try:
-            create_draft(outlook, email, clean_name, filepath, target_folder, fiscal_year)
+            create_draft(outlook, email, clean_name, filepath, target_folder,
+                         fiscal_year, subject_template, body_text)
             created += 1
         except Exception as e:
             failed += 1
@@ -274,7 +315,7 @@ class EmailManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GSC Email Manager")
-        self.root.geometry("900x850")
+        self.root.geometry("900x950")
         self.root.resizable(True, True)
 
         # Data storage
@@ -410,18 +451,47 @@ class EmailManagerApp:
         # Tab 1: Create Drafts
         draft_tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(draft_tab, text="Create Drafts")
+        draft_tab.columnconfigure(0, weight=1)
 
-        ttk.Label(draft_tab, text="Create Outlook email drafts for selected managers:").grid(
-            row=0, column=0, sticky=tk.W, pady=(0, 10)
+        # Email Subject
+        ttk.Label(draft_tab, text="Email Subject:", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 3)
         )
 
+        self.subject_var = tk.StringVar(value=self._get_default_subject())
+        self.subject_entry = ttk.Entry(draft_tab, textvariable=self.subject_var)
+        self.subject_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+
+        # Email Body
+        ttk.Label(draft_tab, text="Email Body:", font=("Segoe UI", 9, "bold")).grid(
+            row=2, column=0, sticky=tk.W, pady=(0, 3)
+        )
+
+        self.body_text = tk.Text(draft_tab, height=8, wrap=tk.WORD,
+                                 font=("Segoe UI", 9))
+        self.body_text.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        self.body_text.insert("1.0", self._get_default_body())
+
+        # Available variables hint
+        ttk.Label(draft_tab, text="Available variables: {manager_name}, {fiscal_year}",
+                  foreground="gray", font=("Segoe UI", 8)).grid(
+            row=4, column=0, sticky=tk.W, pady=(0, 8)
+        )
+
+        # Button row
+        btn_frame = ttk.Frame(draft_tab)
+        btn_frame.grid(row=5, column=0, sticky=(tk.W, tk.E))
+
+        ttk.Button(btn_frame, text="↩ Reset to Default",
+                   command=self._reset_template).grid(row=0, column=0, padx=(0, 10))
+
         self.create_drafts_btn = ttk.Button(
-            draft_tab,
+            btn_frame,
             text="📧 Create Outlook Drafts",
             command=self._create_drafts,
             state=tk.DISABLED
         )
-        self.create_drafts_btn.grid(row=1, column=0, sticky=tk.W)
+        self.create_drafts_btn.grid(row=0, column=1)
 
         # Tab 2: Send Drafts
         send_tab = ttk.Frame(self.notebook, padding="10")
@@ -502,6 +572,34 @@ class EmailManagerApp:
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+
+    def _get_default_subject(self):
+        """Return default email subject template."""
+        return "{fiscal_year} Attainment Report - {manager_name}"
+
+    def _get_default_body(self):
+        """Return default email body as plain text."""
+        return (
+            "Hi {manager_name},\n"
+            "\n"
+            "Please find attached your {fiscal_year} Attainment Report.\n"
+            "\n"
+            "This report includes attainment data for your team, organized by hierarchy "
+            "with quarterly, half-year, and annual breakdowns.\n"
+            "\n"
+            "If you have any questions about the data, please reach out to the "
+            "Sales Compensation team.\n"
+            "\n"
+            "Best regards,\n"
+            "Sales Compensation"
+        )
+
+    def _reset_template(self):
+        """Reset subject and body fields to defaults."""
+        self.subject_var.set(self._get_default_subject())
+        self.body_text.delete("1.0", tk.END)
+        self.body_text.insert("1.0", self._get_default_body())
+
 
     def _load_zip_file(self):
         """Load reports from .zip file (downloaded from web app)."""
@@ -754,6 +852,10 @@ class EmailManagerApp:
         if not response:
             return
 
+        # Read custom templates from UI
+        subject_template = self.subject_var.get().strip()
+        body_text = self.body_text.get("1.0", tk.END).rstrip()
+
         # Disable button during creation
         self.create_drafts_btn.configure(state=tk.DISABLED)
         self.operation_status_var.set(f"Creating {len(with_email)} drafts...")
@@ -771,7 +873,9 @@ class EmailManagerApp:
                     matched_list,
                     target_folder_name="Manager Report",
                     progress_callback=progress_callback,
-                    fiscal_year=self.fiscal_year
+                    fiscal_year=self.fiscal_year,
+                    subject_template=subject_template,
+                    body_text=body_text
                 )
 
                 self.root.after(0, lambda: self.operation_status_var.set(
