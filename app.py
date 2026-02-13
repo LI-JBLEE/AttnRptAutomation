@@ -12,11 +12,11 @@ import streamlit as st
 
 from generate_manager_reports import (
     extract_manager_name, extract_manager_id, sanitize_filename,
-    generate_all_reports, get_all_regions, REPORT_COLUMNS,
+    generate_all_reports, get_all_regions, get_fiscal_year, REPORT_COLUMNS,
 )
 from create_email_drafts import (
     load_email_mapping, clean_display_name,
-    create_drafts_batch,
+    create_drafts_batch, get_drafts_from_folder, send_drafts_batch,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -26,101 +26,170 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Custom CSS for modern, professional look ──────────────────────────────────
+# ── Custom CSS for Microsoft-style look ──────────────────────────────────────
 st.markdown("""
 <style>
-    /* Main title */
+    /* Main title - Microsoft Fluent Design */
     h1 {
-        background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 2.2rem !important;
-        font-weight: 700 !important;
-        padding-bottom: 0.3rem;
+        background-color: #0078D4 !important;
+        color: white !important;
+        font-size: 1.75rem !important;
+        font-weight: 600 !important;
+        padding: 1.25rem 1.5rem !important;
+        border-radius: 4px !important;
+        margin-bottom: 1.5rem !important;
+        box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,.132), 0 0.3px 0.9px 0 rgba(0,0,0,.108);
+        letter-spacing: 0.3px;
     }
 
-    /* Step headers - smaller size */
+    /* Step headers - Microsoft style with dark mode support */
     h2 {
-        font-size: 1.15rem !important;
+        font-size: 1rem !important;
         font-weight: 600 !important;
-        color: #2d3748 !important;
-        border-left: 4px solid #3182ce;
+        color: var(--text-color) !important;
+        border-left: 3px solid #0078D4;
         padding-left: 12px;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.5rem !important;
+        margin-top: 0.75rem !important;
+        margin-bottom: 0.75rem !important;
+        letter-spacing: 0.2px;
     }
 
-    /* Subheaders */
+    /* Subheaders with dark mode support */
     h3 {
-        font-size: 0.95rem !important;
+        font-size: 0.875rem !important;
         font-weight: 600 !important;
-        color: #4a5568 !important;
+        color: var(--text-color) !important;
     }
 
-    /* Multiselect tag colors - light blue */
+    /* Dark mode text colors */
+    @media (prefers-color-scheme: dark) {
+        h2, h3 {
+            color: #FFFFFF !important;
+        }
+    }
+
+    /* Light mode text colors (Streamlit default) */
+    [data-theme="light"] h2,
+    [data-theme="light"] h3 {
+        color: #201F1E !important;
+    }
+
+    /* Dark mode text colors (Streamlit dark theme) */
+    [data-theme="dark"] h2,
+    [data-theme="dark"] h3 {
+        color: #FFFFFF !important;
+    }
+
+    /* Multiselect tag colors - Microsoft blue */
     span[data-baseweb="tag"] {
-        background-color: #dbeafe !important;
-        color: #1e40af !important;
+        background-color: #DEECF9 !important;
+        color: #0078D4 !important;
+        border: 1px solid #0078D4 !important;
     }
     span[data-baseweb="tag"] span[role="presentation"] {
-        color: #3b82f6 !important;
+        color: #0078D4 !important;
     }
 
-    /* Primary buttons */
+    /* Primary buttons - Microsoft blue */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2b6cb0 0%, #3182ce 100%);
-        border: none;
-        border-radius: 8px;
-        padding: 0.5rem 2rem;
-        font-weight: 600;
-        transition: all 0.2s;
+        background-color: #0078D4 !important;
+        border: none !important;
+        border-radius: 2px !important;
+        padding: 0.5rem 1.25rem !important;
+        font-weight: 600 !important;
+        transition: background-color 0.1s ease !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #2c5282 0%, #2b6cb0 100%);
-        box-shadow: 0 4px 12px rgba(49, 130, 206, 0.4);
+        background-color: #106EBE !important;
+        box-shadow: 0 3.2px 7.2px 0 rgba(0,0,0,.132), 0 0.6px 1.8px 0 rgba(0,0,0,.108) !important;
     }
 
-    /* Secondary buttons */
+    /* Secondary buttons with dark mode support */
     .stButton > button:not([kind="primary"]) {
-        border-radius: 8px;
-        border: 1px solid #cbd5e0;
-        transition: all 0.2s;
+        border-radius: 2px !important;
+        border: 1px solid #8A8886 !important;
+        transition: background-color 0.1s ease !important;
+    }
+
+    /* Light mode secondary buttons */
+    [data-theme="light"] .stButton > button:not([kind="primary"]) {
+        background-color: white !important;
+        color: #201F1E !important;
+    }
+    [data-theme="light"] .stButton > button:not([kind="primary"]):hover {
+        background-color: #F3F2F1 !important;
+        border-color: #323130 !important;
+    }
+
+    /* Dark mode secondary buttons */
+    [data-theme="dark"] .stButton > button:not([kind="primary"]) {
+        background-color: #2D2D2D !important;
+        color: #FFFFFF !important;
+        border-color: #5A5A5A !important;
+    }
+    [data-theme="dark"] .stButton > button:not([kind="primary"]):hover {
+        background-color: #3D3D3D !important;
+        border-color: #707070 !important;
     }
 
     /* File uploader area */
     [data-testid="stFileUploader"] {
-        border-radius: 10px;
+        border-radius: 2px;
+        border: 1px solid #EDEBE9;
     }
 
-    /* Metrics */
+    /* Metrics - Microsoft card style */
     [data-testid="stMetric"] {
-        background: #f7fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
+        background: white;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
         padding: 12px 16px;
+        box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,.132), 0 0.3px 0.9px 0 rgba(0,0,0,.108);
     }
 
     /* Dividers */
     hr {
-        border-color: #e2e8f0 !important;
+        border-color: #EDEBE9 !important;
         margin-top: 1.5rem !important;
         margin-bottom: 1rem !important;
     }
 
     /* Expander */
     [data-testid="stExpander"] {
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
     }
 
-    /* Progress bar */
+    /* Progress bar - Microsoft blue */
     .stProgress > div > div {
-        background: linear-gradient(90deg, #3182ce, #63b3ed) !important;
+        background-color: #0078D4 !important;
     }
 
-    /* Success/Info/Warning boxes */
+    /* Success/Info/Warning boxes - Microsoft style */
     .stAlert {
-        border-radius: 8px;
+        border-radius: 2px;
+        border-left: 3px solid;
+    }
+
+    /* Text inputs and selects */
+    input, select, textarea {
+        border-radius: 2px !important;
+    }
+
+    /* General app background */
+    [data-theme="light"] .main {
+        background-color: #FAF9F8;
+    }
+
+    /* Dark mode adjustments */
+    [data-theme="dark"] .main {
+        background-color: #1E1E1E;
+    }
+
+    /* Captions and small text for dark mode */
+    [data-theme="dark"] .stCaption,
+    [data-theme="dark"] [data-testid="stCaption"] {
+        color: #B3B3B3 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -234,6 +303,7 @@ for key, default in [
     ("report_results", None),
     ("manager_list", None),
     ("available_regions", None),
+    ("fiscal_year", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -242,7 +312,7 @@ for key, default in [
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 1: File Upload
 # ══════════════════════════════════════════════════════════════════════════════
-st.header("Step 1  Upload Data Files")
+st.header("Step 1 — Upload Data Files")
 
 col1, col2 = st.columns(2)
 
@@ -271,11 +341,16 @@ if attainment_file is not None and st.session_state.attainment_df is None:
         else:
             st.session_state.attainment_df = df
             st.session_state.available_regions = get_all_regions(df)
+            st.session_state.fiscal_year = get_fiscal_year(df)
 
 if st.session_state.attainment_df is not None:
     df = st.session_state.attainment_df
     n_managers = df["Level_1_Manager"].dropna().nunique()
-    st.success(f"Attainment file loaded: **{len(df):,}** rows, **{n_managers}** managers")
+    fiscal_year = st.session_state.fiscal_year or "FY26"
+    st.success(
+        f"Attainment file loaded: **{len(df):,}** rows, **{n_managers}** managers, "
+        f"**{fiscal_year}**"
+    )
 
 # Validate sales comp file
 if sales_comp_file is not None and st.session_state.email_map is None:
@@ -300,7 +375,7 @@ files_ready = (
 
 if files_ready:
     st.divider()
-    st.header("Step 2  Choose Output Folder")
+    st.header("Step 2 — Choose Output Folder")
 
     st.caption(
         'Select a parent folder. Reports will be saved under a '
@@ -343,7 +418,7 @@ if files_ready:
 # ══════════════════════════════════════════════════════════════════════════════
 if files_ready and st.session_state.output_dir:
     st.divider()
-    st.header("Step 3  Generate Manager Reports")
+    st.header("Step 3 — Generate Manager Reports")
 
     # Actual output directory: parent / Manager report
     actual_output_dir = os.path.join(st.session_state.output_dir, "Manager report")
@@ -390,6 +465,7 @@ if files_ready and st.session_state.output_dir:
                         actual_output_dir,
                         progress_callback=on_progress,
                         selected_regions=gen_regions,
+                        fiscal_year=st.session_state.fiscal_year,
                     )
 
                 st.session_state.reports_generated = True
@@ -414,7 +490,7 @@ if files_ready and st.session_state.output_dir:
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.reports_generated and st.session_state.manager_list:
     st.divider()
-    st.header("Step 4  Select Email Recipients")
+    st.header("Step 4 — Select Email Recipients")
 
     manager_list = st.session_state.manager_list
     all_regions = sorted(set(m["region"] for m in manager_list))
@@ -464,7 +540,7 @@ if st.session_state.reports_generated and st.session_state.manager_list:
 
     # ── Step 5: Generate Email Drafts ──
     st.divider()
-    st.header("Step 5  Generate Outlook Email Drafts")
+    st.header("Step 5 — Generate Outlook Email Drafts")
 
     if not with_email:
         st.warning("No managers with matching email addresses selected.")
@@ -491,6 +567,7 @@ if st.session_state.reports_generated and st.session_state.manager_list:
                     matched_list,
                     target_folder_name="Manager Report",
                     progress_callback=on_email_progress,
+                    fiscal_year=st.session_state.fiscal_year or "FY26",
                 )
 
                 progress_bar.progress(1.0)
@@ -512,3 +589,130 @@ if st.session_state.reports_generated and st.session_state.manager_list:
                 st.error("pywin32 is not installed. Run: `pip install pywin32`")
             except Exception as e:
                 st.error(f"Could not connect to Outlook: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 6: Send Email Drafts
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state.reports_generated:
+    st.divider()
+    st.header("Step 6 — Send Email Drafts")
+
+    st.caption(
+        "⚠️ Warning: Sending emails cannot be undone. "
+        "Make sure to review all drafts in Outlook before sending."
+    )
+
+    col_refresh, col_spacer = st.columns([1, 3])
+
+    with col_refresh:
+        if st.button("🔄 Load Drafts from Outlook"):
+            try:
+                import win32com.client
+                outlook = win32com.client.Dispatch("Outlook.Application")
+                folder, draft_items = get_drafts_from_folder(outlook, "Manager Report")
+
+                if folder is None:
+                    st.warning("No 'Manager Report' folder found in Outlook Drafts.")
+                    st.session_state["draft_items"] = []
+                else:
+                    st.session_state["draft_items"] = draft_items
+                    st.session_state["outlook"] = outlook
+                    st.session_state["draft_folder"] = folder
+                    st.success(f"Loaded {len(draft_items)} drafts from Outlook.")
+
+            except ImportError:
+                st.error("pywin32 is not installed. Run: `pip install pywin32`")
+            except Exception as e:
+                st.error(f"Could not connect to Outlook: {e}")
+
+    if "draft_items" in st.session_state and st.session_state["draft_items"]:
+        draft_items = st.session_state["draft_items"]
+
+        st.write(f"**{len(draft_items)}** draft emails found in Outlook Drafts/Manager Report folder.")
+
+        # Create selection options
+        draft_options = [
+            f"{d['subject']} → {d['to']}" for d in draft_items
+        ]
+
+        # Select All / Deselect All buttons
+        col_select_all, col_deselect_all, col_spacer2 = st.columns([1, 1, 2])
+
+        with col_select_all:
+            if st.button("✅ Select All", use_container_width=True):
+                st.session_state["send_draft_filter_default"] = draft_options
+                st.rerun()
+
+        with col_deselect_all:
+            if st.button("❌ Deselect All", use_container_width=True):
+                st.session_state["send_draft_filter_default"] = []
+                st.rerun()
+
+        # Get default value from session state or empty list
+        default_selection = st.session_state.get("send_draft_filter_default", [])
+
+        selected_labels = st.multiselect(
+            f"Select drafts to send ({len(draft_items)} available):",
+            options=draft_options,
+            default=default_selection,
+            key="send_draft_filter",
+        )
+
+        selected_count = len(selected_labels)
+
+        if selected_count > 0:
+            st.warning(
+                f"⚠️ You are about to send **{selected_count}** email(s). "
+                f"This action cannot be undone."
+            )
+
+            # Map selected labels back to indices
+            selected_indices = [
+                draft_items[i]["index"]
+                for i, label in enumerate(draft_options)
+                if label in selected_labels
+            ]
+
+            if st.button(f"✉️ Send {selected_count} Selected Email(s)", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                def on_send_progress(current, total, subject):
+                    progress_bar.progress(current / total)
+                    status_text.text(f"[{current}/{total}] {subject}")
+
+                try:
+                    results = send_drafts_batch(
+                        st.session_state["outlook"],
+                        st.session_state["draft_folder"],
+                        selected_indices,
+                        progress_callback=on_send_progress,
+                    )
+
+                    progress_bar.progress(1.0)
+                    status_text.text("Complete!")
+
+                    if results["sent"] > 0:
+                        st.success(
+                            f"✅ Successfully sent **{results['sent']}** email(s)!"
+                        )
+
+                    if results["failed"] > 0:
+                        st.error(f"❌ Failed to send **{results['failed']}** email(s).")
+
+                        if results["failures_detail"]:
+                            with st.expander("Failed emails"):
+                                for subject, err in results["failures_detail"]:
+                                    st.write(f"- **{subject}**: {err}")
+
+                    # Clear draft items to force reload
+                    st.session_state["draft_items"] = []
+                    st.info("Click 'Load Drafts from Outlook' to refresh the list.")
+
+                except Exception as e:
+                    st.error(f"Error sending emails: {e}")
+        else:
+            st.info("Select at least one draft to send.")
+    elif "draft_items" in st.session_state:
+        st.info("No drafts found. Click 'Load Drafts from Outlook' to check again.")

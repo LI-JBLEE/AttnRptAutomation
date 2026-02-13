@@ -29,13 +29,19 @@ SALES_COMP_FILE = os.path.join(
     BASE_DIR, "Sales Compensation Report (Daily) 2026-02-12 08_03 PST.xlsx"
 )
 
-EMAIL_SUBJECT = "FY26 Attainment Report - {manager_name}"
-EMAIL_HTML = """\
+def get_email_subject(fiscal_year="FY26"):
+    """Generate email subject with fiscal year."""
+    return f"{fiscal_year} Attainment Report - {{manager_name}}"
+
+
+def get_email_html(fiscal_year="FY26"):
+    """Generate email HTML body with fiscal year."""
+    return f"""\
 <html>
 <body style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #333;">
-<p>Hi {manager_name},</p>
+<p>Hi {{manager_name}},</p>
 
-<p>Please find attached your <b>FY26 Attainment Report</b>.</p>
+<p>Please find attached your <b>{fiscal_year} Attainment Report</b>.</p>
 
 <p>This report includes attainment data for your team, organized by hierarchy
 with quarterly, half-year, and annual breakdowns.</p>
@@ -48,6 +54,11 @@ Sales Compensation</p>
 </body>
 </html>
 """
+
+
+# Backward compatibility - CLI default templates
+EMAIL_SUBJECT = get_email_subject("FY26")
+EMAIL_HTML = get_email_html("FY26")
 
 
 def load_email_mapping(sales_comp_file):
@@ -133,12 +144,14 @@ def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
 
 
 def create_draft(outlook, to_email, manager_name, attachment_path,
-                 target_folder=None):
+                 target_folder=None, fiscal_year="FY26"):
     """Create a single Outlook draft email with the report attached."""
     mail = outlook.CreateItem(0)  # olMailItem
     mail.To = to_email
-    mail.Subject = EMAIL_SUBJECT.format(manager_name=manager_name)
-    mail.HTMLBody = EMAIL_HTML.format(manager_name=manager_name)
+    subject_template = get_email_subject(fiscal_year)
+    html_template = get_email_html(fiscal_year)
+    mail.Subject = subject_template.format(manager_name=manager_name)
+    mail.HTMLBody = html_template.format(manager_name=manager_name)
     mail.Attachments.Add(os.path.abspath(attachment_path))
     mail.Save()  # Save as Draft — does NOT send
 
@@ -148,7 +161,7 @@ def create_draft(outlook, to_email, manager_name, attachment_path,
 
 
 def create_drafts_batch(matched_list, target_folder_name="Manager Report",
-                        progress_callback=None):
+                        progress_callback=None, fiscal_year="FY26"):
     """
     Create Outlook drafts for a list of matched managers.
 
@@ -156,6 +169,7 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
         matched_list: list of (filepath, clean_name, email)
         target_folder_name: Outlook Drafts subfolder name
         progress_callback: optional callable(current, total, message)
+        fiscal_year: fiscal year string (e.g., "FY26") for email subject/body
 
     Returns:
         dict with keys: created, failed, failures_detail
@@ -171,7 +185,7 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
 
     for i, (filepath, clean_name, email) in enumerate(matched_list, 1):
         try:
-            create_draft(outlook, email, clean_name, filepath, target_folder)
+            create_draft(outlook, email, clean_name, filepath, target_folder, fiscal_year)
             created += 1
         except Exception as e:
             failed += 1
@@ -182,6 +196,82 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
 
     return {
         "created": created,
+        "failed": failed,
+        "failures_detail": failures_detail,
+    }
+
+
+def get_drafts_from_folder(outlook, folder_name="Manager Report"):
+    """
+    Get all draft emails from Outlook Drafts/folder_name subfolder.
+
+    Args:
+        outlook: Outlook.Application COM object
+        folder_name: Subfolder name under Drafts
+
+    Returns:
+        tuple: (folder_object, list_of_draft_dicts)
+        Each draft dict has keys: subject, to, index, item
+        Returns (None, []) if folder not found
+    """
+    ns = outlook.GetNamespace("MAPI")
+    drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
+
+    # Find the subfolder
+    for i in range(drafts.Folders.Count):
+        folder = drafts.Folders.Item(i + 1)  # 1-indexed
+        if folder.Name == folder_name:
+            draft_items = []
+            for j in range(folder.Items.Count):
+                item = folder.Items.Item(j + 1)
+                draft_items.append({
+                    "subject": item.Subject,
+                    "to": item.To,
+                    "index": j + 1,
+                    "item": item,
+                })
+            return folder, draft_items
+
+    return None, []
+
+
+def send_drafts_batch(outlook, folder, selected_indices, progress_callback=None):
+    """
+    Send selected draft emails from a folder.
+
+    Args:
+        outlook: Outlook.Application COM object
+        folder: MAPI folder object containing drafts
+        selected_indices: list of 1-based indices to send
+        progress_callback: optional callable(current, total, subject)
+
+    Returns:
+        dict with keys: sent, failed, failures_detail
+        failures_detail is list of (subject, error_str)
+    """
+    sent = 0
+    failed = 0
+    failures_detail = []
+    total = len(selected_indices)
+
+    for i, idx in enumerate(selected_indices, 1):
+        try:
+            item = folder.Items.Item(idx)
+            subject = item.Subject
+            item.Send()  # Send the email immediately
+            sent += 1
+
+            if progress_callback:
+                progress_callback(i, total, subject)
+        except Exception as e:
+            failed += 1
+            failures_detail.append((subject if 'subject' in locals() else f"Index {idx}", str(e)))
+
+            if progress_callback:
+                progress_callback(i, total, f"FAILED: {subject if 'subject' in locals() else f'Index {idx}'}")
+
+    return {
+        "sent": sent,
         "failed": failed,
         "failures_detail": failures_detail,
     }

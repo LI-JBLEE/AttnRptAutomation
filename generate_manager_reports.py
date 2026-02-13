@@ -287,7 +287,7 @@ def build_hierarchy_data(df, manager_name, l1_mgr_ids, person_id_to_l1_mgr_name,
     return result
 
 
-def write_report(wb, manager_name, hierarchy_data, report_columns):
+def write_report(wb, manager_name, hierarchy_data, report_columns, fiscal_year="FY26"):
     """Write a professional formatted report with recursive grouping."""
     ws = wb.active
     ws.title = "Attainment Report"
@@ -299,7 +299,7 @@ def write_report(wb, manager_name, hierarchy_data, report_columns):
 
     # ── Row 1: Title bar ──
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
-    title_cell = ws.cell(row=1, column=1, value=f"FY26 Attainment Report — {clean_name}")
+    title_cell = ws.cell(row=1, column=1, value=f"{fiscal_year} Attainment Report — {clean_name}")
     title_cell.font = title_font
     title_cell.fill = title_fill
     title_cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -462,6 +462,28 @@ def write_report(wb, manager_name, hierarchy_data, report_columns):
     ws.page_setup.fitToHeight = 0
 
 
+def get_fiscal_year(source_df):
+    """
+    Extract fiscal year from the attainment data.
+    Returns string like "FY26" based on the Fiscal Year column.
+    Falls back to "FY26" if column is missing or empty.
+    """
+    if "Fiscal Year" not in source_df.columns:
+        return "FY26"
+
+    fiscal_years = source_df["Fiscal Year"].dropna().unique()
+    if len(fiscal_years) == 0:
+        return "FY26"
+
+    # Take the first fiscal year value (e.g., 2026 -> "FY26")
+    year_value = fiscal_years[0]
+    try:
+        year_int = int(year_value)
+        return f"FY{year_int % 100:02d}"  # 2026 -> "FY26", 2027 -> "FY27"
+    except (ValueError, TypeError):
+        return "FY26"
+
+
 def get_all_regions(source_df):
     """
     Get all unique regions from the attainment data.
@@ -473,7 +495,7 @@ def get_all_regions(source_df):
 
 
 def generate_all_reports(source_df, output_dir, progress_callback=None,
-                         selected_regions=None):
+                         selected_regions=None, fiscal_year=None):
     """
     Generate all manager reports from a pre-loaded DataFrame.
 
@@ -482,11 +504,15 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
         output_dir: output directory path for reports
         progress_callback: optional callable(current, total, message) for UI updates
         selected_regions: optional list of region strings to filter by (None = all)
+        fiscal_year: optional fiscal year string (e.g., "FY26"). If None, auto-detected from data.
 
     Returns:
-        dict with keys: total, region_counts, managers
+        dict with keys: total, region_counts, managers, fiscal_year
               managers is list of (manager_full_name, region, safe_name, filepath)
     """
+    # Auto-detect fiscal year if not provided
+    if fiscal_year is None:
+        fiscal_year = get_fiscal_year(source_df)
     # Build ID-based lookup tables for hierarchy detection
     person_id_to_name, l1_mgr_ids, person_id_to_l1_mgr_name = build_id_mappings(source_df)
 
@@ -510,9 +536,9 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
     for region in regions_to_generate:
         region_dir = os.path.join(output_dir, region)
         if os.path.exists(region_dir):
-            # Only remove existing report files, not the entire folder tree
+            # Only remove existing report files for this fiscal year, not the entire folder tree
             for fname in os.listdir(region_dir):
-                if fname.startswith("FY26_Attainment_") and fname.endswith(".xlsx"):
+                if fname.startswith(f"{fiscal_year}_Attainment_") and fname.endswith(".xlsx"):
                     os.remove(os.path.join(region_dir, fname))
 
     total = len(managers)
@@ -523,7 +549,7 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
     for i, manager in enumerate(managers, 1):
         clean_name = extract_manager_name(manager)
         safe_name = sanitize_filename(clean_name)
-        filename = f"FY26_Attainment_{safe_name}_{report_date}.xlsx"
+        filename = f"{fiscal_year}_Attainment_{safe_name}_{report_date}.xlsx"
 
         # Determine Region subfolder
         region = manager_region.get(manager, "OTHER")
@@ -543,7 +569,7 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
 
         # Create workbook and write report
         wb = Workbook()
-        write_report(wb, manager, hierarchy_data, REPORT_COLUMNS)
+        write_report(wb, manager, hierarchy_data, REPORT_COLUMNS, fiscal_year)
         wb.save(filepath)
 
         generated_managers.append((manager, region, safe_name, filepath))
@@ -555,6 +581,7 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
         "total": total,
         "region_counts": region_counts,
         "managers": generated_managers,
+        "fiscal_year": fiscal_year,
     }
 
 
@@ -573,6 +600,7 @@ def main():
     results = generate_all_reports(df, OUTPUT_DIR, progress_callback=cli_progress)
 
     print(f"\nDone! {results['total']} reports saved to: {OUTPUT_DIR}")
+    print(f"Fiscal Year: {results['fiscal_year']}")
     print("Region distribution:")
     for region, count in sorted(results["region_counts"].items()):
         print(f"  {region}: {count} reports")
