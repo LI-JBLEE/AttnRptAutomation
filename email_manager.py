@@ -74,49 +74,6 @@ Sales Compensation</p>
 """
 
 
-def load_email_mapping(sales_comp_file):
-    """Load {emp_id_str: email} mapping from Sales Compensation Report.
-
-    Note: This function is not used in EmailManager.exe.
-    Email mappings are loaded from metadata.json instead.
-    Kept for compatibility with standalone scripts.
-    """
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(sales_comp_file, read_only=True, data_only=True)
-        ws = wb["Sheet1"]
-
-        email_map = {}
-        # Skip first 4 rows (header=3 means row 4 is the header)
-        rows = list(ws.iter_rows(min_row=5, values_only=True))
-
-        # Find column indices
-        header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
-        emp_id_col = None
-        email_col = None
-
-        for idx, col_name in enumerate(header):
-            if col_name == "Employee ID":
-                emp_id_col = idx
-            elif col_name == "Email - Work":
-                email_col = idx
-
-        if emp_id_col is not None and email_col is not None:
-            for row in rows:
-                if row and len(row) > max(emp_id_col, email_col):
-                    emp_id = row[emp_id_col]
-                    email = row[email_col]
-                    if emp_id is not None and email is not None:
-                        clean_id = str(emp_id).lstrip("0") or "0"
-                        email_map[clean_id] = str(email).strip()
-
-        wb.close()
-        return email_map
-    except ImportError:
-        # Fallback if openpyxl is not available
-        return {}
-
-
 def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
     """Get or create a subfolder under the Outlook Drafts folder."""
     ns = outlook.GetNamespace("MAPI")
@@ -369,11 +326,7 @@ class EmailManagerApp:
         )
 
         ttk.Button(load_frame, text="📂 Load .zip File", command=self._load_zip_file).grid(
-            row=0, column=2, padx=(0, 5)
-        )
-
-        ttk.Button(load_frame, text="📁 Load Folder", command=self._load_folder).grid(
-            row=0, column=3
+            row=0, column=2
         )
         current_row += 1
 
@@ -647,79 +600,6 @@ class EmailManagerApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load .zip file:\n{e}")
             self._log(f"✗ Error loading .zip: {e}")
-
-    def _load_folder(self):
-        """Load reports from folder (for locally generated reports)."""
-        folder_path = filedialog.askdirectory(title="Select Manager Reports Folder")
-
-        if not folder_path:
-            return
-
-        # Prompt for Sales Comp file for email mapping
-        sales_comp_path = filedialog.askopenfilename(
-            title="Select Sales Compensation Report (for email addresses)",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
-        )
-
-        if not sales_comp_path:
-            return
-
-        try:
-            self._log(f"Loading reports from folder: {folder_path}")
-            email_map = load_email_mapping(sales_comp_path)
-            self._log(f"Loaded {len(email_map)} email addresses")
-
-            # Scan folder for report files
-            managers = []
-            for root, dirs, files in os.walk(folder_path):
-                region = os.path.basename(root)
-                for fname in files:
-                    if fname.startswith("FY") and "Attainment_" in fname and fname.endswith(".xlsx"):
-                        # Extract manager name from filename
-                        # FY26_Attainment_John_Smith_20260213.xlsx
-                        try:
-                            parts = fname.replace(".xlsx", "").split("_")
-                            fiscal_year = parts[0]
-                            # Find "Attainment" index
-                            attn_idx = parts.index("Attainment")
-                            # Name is between Attainment and date (last part)
-                            safe_name = "_".join(parts[attn_idx+1:-1])
-
-                            filepath = os.path.join(root, fname)
-
-                            managers.append({
-                                "name": safe_name.replace("_", " "),
-                                "safe_name": safe_name,
-                                "region": region,
-                                "email": None,  # TODO: match from filename to ID
-                                "filepath": filepath
-                            })
-
-                            self.fiscal_year = fiscal_year
-                        except Exception as e:
-                            self._log(f"Skipped {fname}: {e}")
-
-            if not managers:
-                raise ValueError("No report files found in folder")
-
-            self.metadata = {
-                "fiscal_year": self.fiscal_year,
-                "generated_date": datetime.today().strftime("%Y-%m-%d"),
-                "total_reports": len(managers),
-                "managers": managers
-            }
-
-            self.load_path_var.set(folder_path)
-            self.load_status_var.set(f"✓ Loaded {len(managers)} reports ({self.fiscal_year})")
-            self._log(f"✓ Loaded {len(managers)} manager reports")
-
-            self._update_region_checkboxes()
-            self._update_manager_list()
-            self.create_drafts_btn.configure(state=tk.NORMAL)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load folder:\n{e}")
-            self._log(f"✗ Error loading folder: {e}")
 
     def _update_region_checkboxes(self):
         """Update region filter checkboxes based on loaded data."""
@@ -1003,6 +883,13 @@ class EmailManagerApp:
 
 
 def main():
+    # Close PyInstaller splash screen if running from bundled .exe
+    try:
+        import pyi_splash  # noqa: F401 — only available in PyInstaller bundle
+        pyi_splash.close()
+    except ImportError:
+        pass
+
     root = tk.Tk()
     app = EmailManagerApp(root)
     root.mainloop()
