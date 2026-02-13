@@ -158,29 +158,26 @@ def get_drafts_from_folder(outlook, folder_name="Manager Report"):
     return None, []
 
 
-def send_drafts_batch(outlook, folder, selected_indices, progress_callback=None):
+def send_drafts_batch(outlook, folder, draft_items, progress_callback=None):
     """Send selected draft emails from a folder.
 
     Args:
         outlook: Outlook COM object
         folder: Drafts folder object
-        selected_indices: List of 1-based Outlook item indices to send
+        draft_items: List of draft item dictionaries with 'item' objects
         progress_callback: Optional callback function(current, total, message)
     """
     sent = 0
     failed = 0
     failures_detail = []
-    total = len(selected_indices)
+    total = len(draft_items)
 
-    # Sort indices in reverse order to avoid index shifting issues
-    # when items are removed from the folder after sending
-    sorted_indices = sorted(selected_indices, reverse=True)
-
-    for i, idx in enumerate(sorted_indices, 1):
+    # Process in reverse order to minimize index shifting issues
+    for i, draft_dict in enumerate(reversed(draft_items), 1):
         subject = None
         try:
-            # Get the item from folder using 1-based index
-            item = folder.Items.Item(idx)
+            # Get the actual Outlook mail item object
+            item = draft_dict["item"]
             subject = item.Subject
             to_addr = item.To
 
@@ -193,7 +190,7 @@ def send_drafts_batch(outlook, folder, selected_indices, progress_callback=None)
 
         except Exception as e:
             failed += 1
-            error_subject = subject if subject else f"Draft at index {idx}"
+            error_subject = subject if subject else "Unknown draft"
             failures_detail.append((error_subject, str(e)))
 
             if progress_callback:
@@ -785,13 +782,13 @@ class EmailManagerApp:
             messagebox.showerror("Error", "Outlook is not loaded. Please click 'Load Drafts' first.")
             return
 
-        # Map UI indices (0-based) to Outlook indices (1-based)
-        selected_indices_outlook = [self.draft_items[i]["index"] for i in selected_indices_ui]
+        # Get the actual draft item dictionaries for selected items
+        selected_draft_items = [self.draft_items[i] for i in selected_indices_ui]
 
         # Confirmation dialog
         response = messagebox.askyesno(
             "Confirm Send",
-            f"⚠️ You are about to send {len(selected_indices_outlook)} email(s).\n\n"
+            f"⚠️ You are about to send {len(selected_draft_items)} email(s).\n\n"
             "This action cannot be undone. Continue?"
         )
 
@@ -799,17 +796,17 @@ class EmailManagerApp:
             return
 
         self.send_drafts_btn.configure(state=tk.DISABLED)
-        self.operation_status_var.set(f"Sending {len(selected_indices_outlook)} emails...")
+        self.operation_status_var.set(f"Sending {len(selected_draft_items)} emails...")
 
         def run_sending():
             try:
                 def progress_callback(current, total, subject):
-                    self.root.after(0, lambda: self._log(f"[{current}/{total}] Sent: {subject}"))
+                    self.root.after(0, lambda s=subject: self._log(f"[{current}/{total}] Sent: {s}"))
 
                 results = send_drafts_batch(
                     self.outlook,
                     self.draft_folder,
-                    selected_indices_outlook,
+                    selected_draft_items,
                     progress_callback=progress_callback
                 )
 
