@@ -443,7 +443,7 @@ Please ensure:
             st.download_button(
                 label="📦 Download Reports (.zip)",
                 data=zip_buffer.getvalue(),
-                file_name=f"Manager_Reports_{fiscal_year}_{datetime.today().strftime('%Y%m%d')}.zip",
+                file_name=f"Manager_Reports_{fiscal_year}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                 mime="application/zip",
                 type="primary",
                 use_container_width=True
