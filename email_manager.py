@@ -15,7 +15,6 @@ import zipfile
 import json
 import tempfile
 from datetime import datetime
-import pandas as pd
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -59,18 +58,46 @@ Sales Compensation</p>
 
 
 def load_email_mapping(sales_comp_file):
-    """Load {emp_id_str: email} mapping from Sales Compensation Report."""
-    df = pd.read_excel(sales_comp_file, sheet_name="Sheet1", header=3)
+    """Load {emp_id_str: email} mapping from Sales Compensation Report.
 
-    email_map = {}
-    for _, row in df.iterrows():
-        emp_id = row.get("Employee ID")
-        email = row.get("Email - Work")
-        if pd.notna(emp_id) and pd.notna(email):
-            clean_id = str(emp_id).lstrip("0") or "0"
-            email_map[clean_id] = str(email).strip()
+    Note: This function is not used in EmailManager.exe.
+    Email mappings are loaded from metadata.json instead.
+    Kept for compatibility with standalone scripts.
+    """
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(sales_comp_file, read_only=True, data_only=True)
+        ws = wb["Sheet1"]
 
-    return email_map
+        email_map = {}
+        # Skip first 4 rows (header=3 means row 4 is the header)
+        rows = list(ws.iter_rows(min_row=5, values_only=True))
+
+        # Find column indices
+        header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
+        emp_id_col = None
+        email_col = None
+
+        for idx, col_name in enumerate(header):
+            if col_name == "Employee ID":
+                emp_id_col = idx
+            elif col_name == "Email - Work":
+                email_col = idx
+
+        if emp_id_col is not None and email_col is not None:
+            for row in rows:
+                if row and len(row) > max(emp_id_col, email_col):
+                    emp_id = row[emp_id_col]
+                    email = row[email_col]
+                    if emp_id is not None and email is not None:
+                        clean_id = str(emp_id).lstrip("0") or "0"
+                        email_map[clean_id] = str(email).strip()
+
+        wb.close()
+        return email_map
+    except ImportError:
+        # Fallback if openpyxl is not available
+        return {}
 
 
 def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
