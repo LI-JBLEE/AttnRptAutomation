@@ -147,11 +147,13 @@ def get_drafts_from_folder(outlook, folder_name="Manager Report"):
             draft_items = []
             for j in range(folder.Items.Count):
                 item = folder.Items.Item(j + 1)
+                # Store EntryID (persistent identifier) instead of Item object
+                # COM objects can become invalid when stored in Python data structures
                 draft_items.append({
                     "subject": item.Subject,
                     "to": item.To,
+                    "entry_id": item.EntryID,  # Unique persistent identifier
                     "index": j + 1,
-                    "item": item,
                 })
             return folder, draft_items
 
@@ -164,7 +166,7 @@ def send_drafts_batch(outlook, folder, draft_items, progress_callback=None):
     Args:
         outlook: Outlook COM object
         folder: Drafts folder object
-        draft_items: List of draft item dictionaries with 'item' objects
+        draft_items: List of draft item dictionaries with 'entry_id'
         progress_callback: Optional callback function(current, total, message)
     """
     sent = 0
@@ -172,14 +174,27 @@ def send_drafts_batch(outlook, folder, draft_items, progress_callback=None):
     failures_detail = []
     total = len(draft_items)
 
-    # Process in reverse order to minimize index shifting issues
-    for i, draft_dict in enumerate(reversed(draft_items), 1):
-        subject = None
+    # Get namespace for GetItemFromID
+    ns = outlook.GetNamespace("MAPI")
+
+    # Process each draft item
+    for i, draft_dict in enumerate(draft_items, 1):
+        subject = draft_dict.get("subject", "Unknown")
+        to_addr = draft_dict.get("to", "Unknown")
+        entry_id = draft_dict.get("entry_id")
+
         try:
-            # Get the actual Outlook mail item object
-            item = draft_dict["item"]
-            subject = item.Subject
-            to_addr = item.To
+            # Retrieve the actual mail item using its EntryID
+            # This is the correct way to handle COM objects in Outlook
+            item = ns.GetItemFromID(entry_id)
+
+            # Verify it's still a draft (not already sent)
+            if item.Sent:
+                failed += 1
+                failures_detail.append((subject, "Email already sent"))
+                if progress_callback:
+                    progress_callback(i, total, f"SKIPPED: {subject} (already sent)")
+                continue
 
             # Send the email
             item.Send()
@@ -190,11 +205,10 @@ def send_drafts_batch(outlook, folder, draft_items, progress_callback=None):
 
         except Exception as e:
             failed += 1
-            error_subject = subject if subject else "Unknown draft"
-            failures_detail.append((error_subject, str(e)))
+            failures_detail.append((subject, str(e)))
 
             if progress_callback:
-                progress_callback(i, total, f"FAILED: {error_subject}")
+                progress_callback(i, total, f"FAILED: {subject}")
 
     return {
         "sent": sent,
