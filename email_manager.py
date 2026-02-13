@@ -409,11 +409,11 @@ class EmailManagerApp:
             row=0, column=0, sticky=tk.W
         )
 
-        ttk.Button(mgr_header, text="✅ Select All", command=self._select_all_managers, width=12).grid(
+        ttk.Button(mgr_header, text="✅ Select All", command=self._select_all_managers, width=15).grid(
             row=0, column=1, padx=5
         )
 
-        ttk.Button(mgr_header, text="❌ Deselect All", command=self._deselect_all_managers, width=12).grid(
+        ttk.Button(mgr_header, text="❌ Deselect All", command=self._deselect_all_managers, width=15).grid(
             row=0, column=2
         )
 
