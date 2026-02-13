@@ -307,7 +307,7 @@ class EmailManagerApp:
 
         scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
         self.manager_listbox = tk.Listbox(
-            listbox_frame, selectmode=tk.MULTIPLE, height=10,
+            listbox_frame, selectmode=tk.MULTIPLE, height=20,
             yscrollcommand=scrollbar.set
         )
         scrollbar.config(command=self.manager_listbox.yview)
