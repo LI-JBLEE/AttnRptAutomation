@@ -210,8 +210,18 @@ def send_drafts_batch(draft_items, progress_callback=None):
                     progress_callback(i, total, f"{subject} → {to_addr}")
 
             except Exception as e:
+                error_str = str(e)
                 failed += 1
-                failures_detail.append((subject, str(e)))
+
+                # Provide user-friendly error messages for common issues
+                if "inline response" in error_str.lower():
+                    friendly_error = "Cannot send inline reply draft - open draft in new window and save, then try again"
+                elif "4096" in error_str and "Microsoft Outlook" in error_str:
+                    friendly_error = "Outlook-specific error - draft may be in reply/forward mode"
+                else:
+                    friendly_error = str(e)
+
+                failures_detail.append((subject, friendly_error))
 
                 if progress_callback:
                     progress_callback(i, total, f"FAILED: {subject}")
@@ -237,7 +247,7 @@ class EmailManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GSC Email Manager")
-        self.root.geometry("900x900")
+        self.root.geometry("900x750")
         self.root.resizable(True, True)
 
         # Data storage
@@ -347,7 +357,7 @@ class EmailManagerApp:
 
         scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
         self.manager_listbox = tk.Listbox(
-            listbox_frame, selectmode=tk.MULTIPLE, height=20,
+            listbox_frame, selectmode=tk.MULTIPLE, height=10,
             yscrollcommand=scrollbar.set
         )
         scrollbar.config(command=self.manager_listbox.yview)
@@ -456,7 +466,7 @@ class EmailManagerApp:
             font=("Segoe UI", 11, "bold"),
             foreground="#0078D4"
         )
-        label.grid(row=row, column=0, sticky=tk.W, pady=(10, 5))
+        label.grid(row=row, column=0, sticky=tk.W, pady=(5, 3))
 
     def _log(self, message):
         """Add message to activity log."""
