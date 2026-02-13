@@ -279,7 +279,16 @@ st.header("Step 1 — Upload Data Files")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Global Attainment Report")
+    sub1a, sub1b = st.columns([3, 2])
+    with sub1a:
+        st.subheader("Global Attainment Report")
+    with sub1b:
+        st.markdown(
+            '<div style="display: flex; align-items: center; height: 100%; padding-top: 0.6rem;">'
+            '<a href="https://microsoft.sharepoint.com/teams/PEBIA_SHARE/Shared%20Documents/Forms/AllItems.aspx?OR=Teams-HL&CT=1728421714933&clickparams=eyJBcHBOYW1lIjoiVGVhbXMtRGVza3RvcCIsIkFwcFZlcnNpb24iOiI0OS8yNDA5MTIyMTMwOSIsIkhhc0ZlZGVyYXRlZFVzZXIiOmZhbHNlfQ%3D%3D&id=/teams/PEBIA_SHARE/Shared%20Documents/Beacon/Reports/Attainment%20Reports/All%20LOBs&viewid=23e69811-af19-4016-8278-f4c5f6c88e53" target="_blank" style="font-size: 0.8rem; text-decoration: none; font-style: italic; opacity: 0.6;">'
+            '📂 Quota Attainment Report</a></div>',
+            unsafe_allow_html=True,
+        )
     attainment_file = st.file_uploader(
         "Upload the Global Attainment Club Excel file",
         type=["xlsx"],
