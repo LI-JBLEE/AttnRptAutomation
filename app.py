@@ -33,6 +33,11 @@ from datetime import datetime
 # ── Custom CSS for Microsoft-style look ──────────────────────────────────────
 st.markdown("""
 <style>
+    /* Hide Streamlit top-right toolbar */
+    [data-testid="stToolbar"] {
+        display: none !important;
+    }
+
     /* Main title - Microsoft Fluent Design */
     h1 {
         background-color: #0078D4 !important;
