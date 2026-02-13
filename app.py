@@ -506,5 +506,7 @@ Please ensure:
 **📥 Next Steps:**
 1. **Download Reports (.zip)**: Contains all manager reports + metadata
 2. **Download Email Manager**: Windows app for sending emails via Outlook
-3. Run EmailManager.exe → Load .zip → Send emails
+3. Extract EmailManager.zip → Run EmailManager.exe
+4. ⚠️ If Windows SmartScreen warns: Click **More info** → Click **Run anyway**
+5. Load .zip → Send emails
         """)
