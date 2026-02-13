@@ -159,27 +159,45 @@ def get_drafts_from_folder(outlook, folder_name="Manager Report"):
 
 
 def send_drafts_batch(outlook, folder, selected_indices, progress_callback=None):
-    """Send selected draft emails from a folder."""
+    """Send selected draft emails from a folder.
+
+    Args:
+        outlook: Outlook COM object
+        folder: Drafts folder object
+        selected_indices: List of 1-based Outlook item indices to send
+        progress_callback: Optional callback function(current, total, message)
+    """
     sent = 0
     failed = 0
     failures_detail = []
     total = len(selected_indices)
 
-    for i, idx in enumerate(selected_indices, 1):
+    # Sort indices in reverse order to avoid index shifting issues
+    # when items are removed from the folder after sending
+    sorted_indices = sorted(selected_indices, reverse=True)
+
+    for i, idx in enumerate(sorted_indices, 1):
+        subject = None
         try:
+            # Get the item from folder using 1-based index
             item = folder.Items.Item(idx)
             subject = item.Subject
-            item.Send()  # Send the email immediately
+            to_addr = item.To
+
+            # Send the email
+            item.Send()
             sent += 1
 
             if progress_callback:
-                progress_callback(i, total, subject)
+                progress_callback(i, total, f"{subject} → {to_addr}")
+
         except Exception as e:
             failed += 1
-            failures_detail.append((subject if 'subject' in locals() else f"Index {idx}", str(e)))
+            error_subject = subject if subject else f"Draft at index {idx}"
+            failures_detail.append((error_subject, str(e)))
 
             if progress_callback:
-                progress_callback(i, total, f"FAILED: {subject if 'subject' in locals() else f'Index {idx}'}")
+                progress_callback(i, total, f"FAILED: {error_subject}")
 
     return {
         "sent": sent,
@@ -197,7 +215,7 @@ class EmailManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GSC Email Manager")
-        self.root.geometry("900x750")
+        self.root.geometry("900x900")
         self.root.resizable(True, True)
 
         # Data storage
@@ -761,6 +779,10 @@ class EmailManagerApp:
 
         if not selected_indices_ui:
             messagebox.showwarning("Warning", "Please select at least one draft to send.")
+            return
+
+        if not self.outlook or not self.draft_folder:
+            messagebox.showerror("Error", "Outlook is not loaded. Please click 'Load Drafts' first.")
             return
 
         # Map UI indices (0-based) to Outlook indices (1-based)
