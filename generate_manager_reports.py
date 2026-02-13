@@ -462,41 +462,72 @@ def write_report(wb, manager_name, hierarchy_data, report_columns):
     ws.page_setup.fitToHeight = 0
 
 
-def main():
-    print("Loading source data...")
-    df = pd.read_excel(SOURCE_FILE, sheet_name="in")
+def get_all_regions(source_df):
+    """
+    Get all unique regions from the attainment data.
+    Returns sorted list of region strings.
+    """
+    person_id_to_name, _, _ = build_id_mappings(source_df)
+    manager_region = build_manager_region_map(source_df, person_id_to_name)
+    return sorted(set(manager_region.values()))
 
-    # Rename the Plan_Period column
-    df.rename(columns={"Plan_Period;MBO_Description": "Plan_Period"}, inplace=True)
 
+def generate_all_reports(source_df, output_dir, progress_callback=None,
+                         selected_regions=None):
+    """
+    Generate all manager reports from a pre-loaded DataFrame.
+
+    Args:
+        source_df: pandas DataFrame (attainment data with Plan_Period column renamed)
+        output_dir: output directory path for reports
+        progress_callback: optional callable(current, total, message) for UI updates
+        selected_regions: optional list of region strings to filter by (None = all)
+
+    Returns:
+        dict with keys: total, region_counts, managers
+              managers is list of (manager_full_name, region, safe_name, filepath)
+    """
     # Build ID-based lookup tables for hierarchy detection
-    print("Building ID-based hierarchy mappings...")
-    person_id_to_name, l1_mgr_ids, person_id_to_l1_mgr_name = build_id_mappings(df)
+    person_id_to_name, l1_mgr_ids, person_id_to_l1_mgr_name = build_id_mappings(source_df)
 
     # Build manager -> Region mapping (ID-based)
-    print("Building manager Region mapping...")
-    manager_region = build_manager_region_map(df, person_id_to_name)
+    manager_region = build_manager_region_map(source_df, person_id_to_name)
 
-    # Clean up existing output
-    if os.path.exists(OUTPUT_DIR):
-        shutil.rmtree(OUTPUT_DIR)
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Get unique L1 managers
-    managers = sorted(df["Level_1_Manager"].dropna().unique())
+    # Get unique L1 managers, optionally filtered by region
+    all_managers = sorted(source_df["Level_1_Manager"].dropna().unique())
+    if selected_regions is not None:
+        region_set = set(selected_regions)
+        managers = [m for m in all_managers if manager_region.get(m, "OTHER") in region_set]
+    else:
+        managers = all_managers
+
+    # Clean up only the region subfolders that will be regenerated
+    regions_to_generate = set(
+        manager_region.get(m, "OTHER") for m in managers
+    )
+    for region in regions_to_generate:
+        region_dir = os.path.join(output_dir, region)
+        if os.path.exists(region_dir):
+            # Only remove existing report files, not the entire folder tree
+            for fname in os.listdir(region_dir):
+                if fname.startswith("FY26_Attainment_") and fname.endswith(".xlsx"):
+                    os.remove(os.path.join(region_dir, fname))
 
     total = len(managers)
     region_counts = {}
-    print(f"Generating reports for {total} managers...")
+    report_date = datetime.today().strftime("%Y%m%d")
+    generated_managers = []
 
     for i, manager in enumerate(managers, 1):
         clean_name = extract_manager_name(manager)
         safe_name = sanitize_filename(clean_name)
-        filename = f"FY26_Attainment_{safe_name}_{REPORT_DATE}.xlsx"
+        filename = f"FY26_Attainment_{safe_name}_{report_date}.xlsx"
 
         # Determine Region subfolder
         region = manager_region.get(manager, "OTHER")
-        region_dir = os.path.join(OUTPUT_DIR, region)
+        region_dir = os.path.join(output_dir, region)
         os.makedirs(region_dir, exist_ok=True)
         filepath = os.path.join(region_dir, filename)
 
@@ -504,7 +535,7 @@ def main():
 
         # Build hierarchy data (ID-based matching)
         hierarchy_data = build_hierarchy_data(
-            df, manager, l1_mgr_ids, person_id_to_l1_mgr_name
+            source_df, manager, l1_mgr_ids, person_id_to_l1_mgr_name
         )
 
         if not hierarchy_data:
@@ -515,12 +546,35 @@ def main():
         write_report(wb, manager, hierarchy_data, REPORT_COLUMNS)
         wb.save(filepath)
 
-        if i % 50 == 0 or i == total:
-            print(f"  [{i}/{total}] Generated: {region}/{filename}")
+        generated_managers.append((manager, region, safe_name, filepath))
 
-    print(f"\nDone! {total} reports saved to: {OUTPUT_DIR}")
+        if progress_callback:
+            progress_callback(i, total, f"{region}/{filename}")
+
+    return {
+        "total": total,
+        "region_counts": region_counts,
+        "managers": generated_managers,
+    }
+
+
+def main():
+    print("Loading source data...")
+    df = pd.read_excel(SOURCE_FILE, sheet_name="in")
+
+    # Rename the Plan_Period column
+    df.rename(columns={"Plan_Period;MBO_Description": "Plan_Period"}, inplace=True)
+
+    def cli_progress(current, total, message):
+        if current % 50 == 0 or current == total:
+            print(f"  [{current}/{total}] Generated: {message}")
+
+    print("Generating reports...")
+    results = generate_all_reports(df, OUTPUT_DIR, progress_callback=cli_progress)
+
+    print(f"\nDone! {results['total']} reports saved to: {OUTPUT_DIR}")
     print("Region distribution:")
-    for region, count in sorted(region_counts.items()):
+    for region, count in sorted(results["region_counts"].items()):
         print(f"  {region}: {count} reports")
 
 

@@ -114,7 +114,26 @@ def scan_report_files(folder_path):
     return files
 
 
-def create_draft(outlook, to_email, manager_name, attachment_path):
+def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
+    """
+    Get or create a subfolder under the Outlook Drafts folder.
+    Returns the target folder MAPI object.
+    """
+    ns = outlook.GetNamespace("MAPI")
+    drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
+
+    # Check if subfolder already exists
+    for i in range(drafts.Folders.Count):
+        folder = drafts.Folders.Item(i + 1)  # 1-indexed
+        if folder.Name == folder_name:
+            return folder
+
+    # Create subfolder
+    return drafts.Folders.Add(folder_name)
+
+
+def create_draft(outlook, to_email, manager_name, attachment_path,
+                 target_folder=None):
     """Create a single Outlook draft email with the report attached."""
     mail = outlook.CreateItem(0)  # olMailItem
     mail.To = to_email
@@ -122,6 +141,50 @@ def create_draft(outlook, to_email, manager_name, attachment_path):
     mail.HTMLBody = EMAIL_HTML.format(manager_name=manager_name)
     mail.Attachments.Add(os.path.abspath(attachment_path))
     mail.Save()  # Save as Draft — does NOT send
+
+    # Move to target subfolder if specified
+    if target_folder is not None:
+        mail.Move(target_folder)
+
+
+def create_drafts_batch(matched_list, target_folder_name="Manager Report",
+                        progress_callback=None):
+    """
+    Create Outlook drafts for a list of matched managers.
+
+    Args:
+        matched_list: list of (filepath, clean_name, email)
+        target_folder_name: Outlook Drafts subfolder name
+        progress_callback: optional callable(current, total, message)
+
+    Returns:
+        dict with keys: created, failed, failures_detail
+    """
+    import win32com.client
+    outlook = win32com.client.Dispatch("Outlook.Application")
+    target_folder = get_or_create_drafts_subfolder(outlook, target_folder_name)
+
+    total = len(matched_list)
+    created = 0
+    failed = 0
+    failures_detail = []
+
+    for i, (filepath, clean_name, email) in enumerate(matched_list, 1):
+        try:
+            create_draft(outlook, email, clean_name, filepath, target_folder)
+            created += 1
+        except Exception as e:
+            failed += 1
+            failures_detail.append((clean_name, email, str(e)))
+
+        if progress_callback:
+            progress_callback(i, total, clean_name)
+
+    return {
+        "created": created,
+        "failed": failed,
+        "failures_detail": failures_detail,
+    }
 
 
 def main():
