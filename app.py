@@ -16,7 +16,6 @@ from generate_manager_reports import (
 )
 from create_email_drafts import (
     load_email_mapping, clean_display_name,
-    create_drafts_batch, get_drafts_from_folder, send_drafts_batch,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -25,6 +24,12 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+
+# Additional imports for .zip download
+import zipfile
+import io
+import json
+from datetime import datetime
 
 # ── Custom CSS for Microsoft-style look ──────────────────────────────────────
 st.markdown("""
@@ -250,48 +255,6 @@ def validate_sales_comp_file(uploaded_file):
     return email_map, None
 
 
-def build_manager_list(attainment_df, email_map, output_dir):
-    """
-    Build list of manager info from generated report files.
-    Returns list of dicts with keys: name, region, email, filepath, safe_name
-    """
-    managers = []
-    for root, _, filenames in os.walk(output_dir):
-        for fname in filenames:
-            if fname.startswith("FY26_Attainment_") and fname.endswith(".xlsx"):
-                filepath = os.path.join(root, fname)
-                region = os.path.basename(root)
-
-                # Extract manager name from filename
-                parts = fname[len("FY26_Attainment_"):-5]  # remove prefix and .xlsx
-                last_underscore = parts.rfind("_")
-                safe_name = parts[:last_underscore] if last_underscore > 0 else parts
-
-                # Look up full name and email via attainment data
-                mgr_full_name = None
-                mgr_email = None
-                for mgr in attainment_df["Level_1_Manager"].dropna().unique():
-                    clean = extract_manager_name(mgr)
-                    if sanitize_filename(clean) == safe_name:
-                        mgr_full_name = mgr
-                        emp_id = extract_manager_id(mgr)
-                        if emp_id:
-                            clean_id = emp_id.lstrip("0") or "0"
-                            mgr_email = email_map.get(clean_id)
-                        break
-
-                display_name = clean_display_name(mgr_full_name) if mgr_full_name else safe_name
-
-                managers.append({
-                    "name": display_name,
-                    "region": region,
-                    "email": mgr_email,
-                    "filepath": filepath,
-                    "safe_name": safe_name,
-                })
-
-    managers.sort(key=lambda m: (m["region"], m["name"]))
-    return managers
 
 
 # ── Initialize session state ──────────────────────────────────────────────────
@@ -301,7 +264,6 @@ for key, default in [
     ("output_dir", ""),
     ("reports_generated", False),
     ("report_results", None),
-    ("manager_list", None),
     ("available_regions", None),
     ("fiscal_year", None),
 ]:
@@ -471,248 +433,65 @@ if files_ready and st.session_state.output_dir:
                 st.session_state.reports_generated = True
                 st.session_state.report_results = results
 
-                # Build manager list for email step
-                st.session_state.manager_list = build_manager_list(
-                    st.session_state.attainment_df,
-                    st.session_state.email_map,
-                    actual_output_dir,
-                )
-
                 progress_bar.progress(1.0)
                 status_text.text("Complete!")
                 st.rerun()
         else:
             st.warning("Select at least one region to generate reports.")
 
+    # ── Download Section (After Reports Generated) ──
+    if st.session_state.reports_generated:
+        st.divider()
+        st.subheader("📦 Download Reports")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 4 & 5: Email Draft Selection and Generation
-# ══════════════════════════════════════════════════════════════════════════════
-if st.session_state.reports_generated and st.session_state.manager_list:
-    st.divider()
-    st.header("Step 4 — Select Email Recipients")
+        results = st.session_state.report_results
+        fiscal_year = st.session_state.fiscal_year or "FY26"
+        email_map = st.session_state.email_map
 
-    manager_list = st.session_state.manager_list
-    all_regions = sorted(set(m["region"] for m in manager_list))
+        # Create .zip file in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add all Excel files
+            for mgr_info in results["managers"]:
+                # mgr_info: (full_name, region, safe_name, filepath)
+                filepath = mgr_info[3]
+                region = mgr_info[1]
+                arcname = os.path.join(region, os.path.basename(filepath))
+                zip_file.write(filepath, arcname)
 
-    # Region filter
-    selected_regions = st.multiselect(
-        "Filter by Region:",
-        options=all_regions,
-        default=all_regions,
-        key="email_region_filter",
-    )
+            # Build metadata JSON
+            metadata = {
+                "fiscal_year": fiscal_year,
+                "generated_date": datetime.today().strftime("%Y-%m-%d"),
+                "total_reports": results["total"],
+                "managers": [
+                    {
+                        "name": clean_display_name(m[0]),
+                        "safe_name": m[2],
+                        "region": m[1],
+                        "email": email_map.get(extract_manager_id(m[0])),
+                        "filepath": os.path.join(m[1], os.path.basename(m[3]))
+                    }
+                    for m in results["managers"]
+                ]
+            }
+            zip_file.writestr("manager_metadata.json", json.dumps(metadata, indent=2))
 
-    # Filter managers by selected regions
-    filtered_managers = [m for m in manager_list if m["region"] in selected_regions]
-
-    # Manager filter
-    manager_options = [
-        f"{m['name']} ({m['region']})" for m in filtered_managers
-    ]
-
-    selected_manager_labels = st.multiselect(
-        f"Select Managers ({len(filtered_managers)} available):",
-        options=manager_options,
-        default=manager_options,
-        key="manager_filter",
-    )
-
-    # Resolve selected managers back to manager dicts
-    selected_managers = [
-        m for m, label in zip(filtered_managers, manager_options)
-        if label in selected_manager_labels
-    ]
-
-    # Matching summary
-    with_email = [m for m in selected_managers if m["email"]]
-    without_email = [m for m in selected_managers if not m["email"]]
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Selected", len(selected_managers))
-    col2.metric("Email Matched", len(with_email))
-    col3.metric("No Email", len(without_email))
-
-    if without_email:
-        with st.expander(f"Managers without email ({len(without_email)})"):
-            for m in without_email:
-                st.write(f"- {m['name']} ({m['region']})")
-
-    # ── Step 5: Generate Email Drafts ──
-    st.divider()
-    st.header("Step 5 — Generate Outlook Email Drafts")
-
-    if not with_email:
-        st.warning("No managers with matching email addresses selected.")
-    else:
-        st.write(
-            f"**{len(with_email)}** email drafts will be created in your "
-            f"Outlook **Drafts / Manager Report** folder."
+        # Download button
+        st.download_button(
+            label="📦 Download All Reports (.zip)",
+            data=zip_buffer.getvalue(),
+            file_name=f"Manager_Reports_{fiscal_year}_{datetime.today().strftime('%Y%m%d')}.zip",
+            mime="application/zip",
+            type="primary"
         )
 
-        if st.button("Generate Email Drafts", type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+        st.info("""
+**✅ Reports generated successfully!**
 
-            def on_email_progress(current, total, message):
-                progress_bar.progress(current / total)
-                status_text.text(f"[{current}/{total}] {message}")
-
-            matched_list = [
-                (m["filepath"], m["name"], m["email"]) for m in with_email
-            ]
-
-            try:
-                results = create_drafts_batch(
-                    matched_list,
-                    target_folder_name="Manager Report",
-                    progress_callback=on_email_progress,
-                    fiscal_year=st.session_state.fiscal_year or "FY26",
-                )
-
-                progress_bar.progress(1.0)
-                status_text.text("Complete!")
-
-                st.success(
-                    f"Done! **{results['created']}** drafts created, "
-                    f"**{results['failed']}** failed."
-                )
-
-                if results["failures_detail"]:
-                    with st.expander("Failed drafts"):
-                        for name, email, err in results["failures_detail"]:
-                            st.write(f"- **{name}** ({email}): {err}")
-
-                st.info("Check your Outlook > Drafts > Manager Report folder.")
-
-            except ImportError:
-                st.error("pywin32 is not installed. Run: `pip install pywin32`")
-            except Exception as e:
-                st.error(f"Could not connect to Outlook: {e}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 6: Send Email Drafts
-# ══════════════════════════════════════════════════════════════════════════════
-if st.session_state.reports_generated:
-    st.divider()
-    st.header("Step 6 — Send Email Drafts")
-
-    st.caption(
-        "⚠️ Warning: Sending emails cannot be undone. "
-        "Make sure to review all drafts in Outlook before sending."
-    )
-
-    col_refresh, col_spacer = st.columns([1, 3])
-
-    with col_refresh:
-        if st.button("🔄 Load Drafts from Outlook"):
-            try:
-                import win32com.client
-                outlook = win32com.client.Dispatch("Outlook.Application")
-                folder, draft_items = get_drafts_from_folder(outlook, "Manager Report")
-
-                if folder is None:
-                    st.warning("No 'Manager Report' folder found in Outlook Drafts.")
-                    st.session_state["draft_items"] = []
-                else:
-                    st.session_state["draft_items"] = draft_items
-                    st.session_state["outlook"] = outlook
-                    st.session_state["draft_folder"] = folder
-                    st.success(f"Loaded {len(draft_items)} drafts from Outlook.")
-
-            except ImportError:
-                st.error("pywin32 is not installed. Run: `pip install pywin32`")
-            except Exception as e:
-                st.error(f"Could not connect to Outlook: {e}")
-
-    if "draft_items" in st.session_state and st.session_state["draft_items"]:
-        draft_items = st.session_state["draft_items"]
-
-        st.write(f"**{len(draft_items)}** draft emails found in Outlook Drafts/Manager Report folder.")
-
-        # Create selection options
-        draft_options = [
-            f"{d['subject']} → {d['to']}" for d in draft_items
-        ]
-
-        # Select All / Deselect All buttons
-        col_select_all, col_deselect_all, col_spacer2 = st.columns([1, 1, 2])
-
-        with col_select_all:
-            if st.button("✅ Select All", use_container_width=True):
-                st.session_state["send_draft_filter_default"] = draft_options
-                st.rerun()
-
-        with col_deselect_all:
-            if st.button("❌ Deselect All", use_container_width=True):
-                st.session_state["send_draft_filter_default"] = []
-                st.rerun()
-
-        # Get default value from session state or empty list
-        default_selection = st.session_state.get("send_draft_filter_default", [])
-
-        selected_labels = st.multiselect(
-            f"Select drafts to send ({len(draft_items)} available):",
-            options=draft_options,
-            default=default_selection,
-            key="send_draft_filter",
-        )
-
-        selected_count = len(selected_labels)
-
-        if selected_count > 0:
-            st.warning(
-                f"⚠️ You are about to send **{selected_count}** email(s). "
-                f"This action cannot be undone."
-            )
-
-            # Map selected labels back to indices
-            selected_indices = [
-                draft_items[i]["index"]
-                for i, label in enumerate(draft_options)
-                if label in selected_labels
-            ]
-
-            if st.button(f"✉️ Send {selected_count} Selected Email(s)", type="primary"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                def on_send_progress(current, total, subject):
-                    progress_bar.progress(current / total)
-                    status_text.text(f"[{current}/{total}] {subject}")
-
-                try:
-                    results = send_drafts_batch(
-                        st.session_state["outlook"],
-                        st.session_state["draft_folder"],
-                        selected_indices,
-                        progress_callback=on_send_progress,
-                    )
-
-                    progress_bar.progress(1.0)
-                    status_text.text("Complete!")
-
-                    if results["sent"] > 0:
-                        st.success(
-                            f"✅ Successfully sent **{results['sent']}** email(s)!"
-                        )
-
-                    if results["failed"] > 0:
-                        st.error(f"❌ Failed to send **{results['failed']}** email(s).")
-
-                        if results["failures_detail"]:
-                            with st.expander("Failed emails"):
-                                for subject, err in results["failures_detail"]:
-                                    st.write(f"- **{subject}**: {err}")
-
-                    # Clear draft items to force reload
-                    st.session_state["draft_items"] = []
-                    st.info("Click 'Load Drafts from Outlook' to refresh the list.")
-
-                except Exception as e:
-                    st.error(f"Error sending emails: {e}")
-        else:
-            st.info("Select at least one draft to send.")
-    elif "draft_items" in st.session_state:
-        st.info("No drafts found. Click 'Load Drafts from Outlook' to check again.")
+**📥 Next Steps:**
+1. Download the .zip file using the button above
+2. Use the **Email Manager** desktop app to send reports via Outlook:
+   - Download: [EmailManager.exe](https://github.com/LI-JBLEE/AttnRptAutomation/releases/latest)
+   - Load the .zip file → Select managers → Send emails
+        """)
