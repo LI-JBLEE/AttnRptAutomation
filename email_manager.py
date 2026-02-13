@@ -378,7 +378,7 @@ class EmailManagerApp:
 
         scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
         self.manager_listbox = tk.Listbox(
-            listbox_frame, selectmode=tk.MULTIPLE, height=10,
+            listbox_frame, selectmode=tk.EXTENDED, height=10,
             yscrollcommand=scrollbar.set
         )
         scrollbar.config(command=self.manager_listbox.yview)
@@ -481,7 +481,7 @@ class EmailManagerApp:
 
         draft_scrollbar = ttk.Scrollbar(draft_list_frame, orient=tk.VERTICAL)
         self.draft_listbox = tk.Listbox(
-            draft_list_frame, selectmode=tk.MULTIPLE, height=8,
+            draft_list_frame, selectmode=tk.EXTENDED, height=8,
             yscrollcommand=draft_scrollbar.set
         )
         draft_scrollbar.config(command=self.draft_listbox.yview)
