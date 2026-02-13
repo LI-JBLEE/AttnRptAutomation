@@ -29,6 +29,7 @@ st.set_page_config(
 import zipfile
 import io
 import json
+import tempfile
 from datetime import datetime
 
 # ── Custom CSS for Microsoft-style look ──────────────────────────────────────
@@ -261,11 +262,11 @@ def validate_sales_comp_file(uploaded_file):
 for key, default in [
     ("attainment_df", None),
     ("email_map", None),
-    ("output_dir", ""),
     ("reports_generated", False),
     ("report_results", None),
     ("available_regions", None),
     ("fiscal_year", None),
+    ("temp_dir", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -328,7 +329,7 @@ if st.session_state.email_map is not None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 2: Output Folder
+# STEP 2: Generate Reports (with Region filter)
 # ══════════════════════════════════════════════════════════════════════════════
 files_ready = (
     st.session_state.attainment_df is not None
@@ -337,53 +338,7 @@ files_ready = (
 
 if files_ready:
     st.divider()
-    st.header("Step 2 — Choose Output Folder")
-
-    st.caption(
-        'Select a parent folder. Reports will be saved under a '
-        '"Manager report" subfolder with Region subfolders inside.'
-    )
-
-    col_input, col_btn = st.columns([5, 1])
-
-    with col_input:
-        default_dir = r"C:\Attainment Reports"
-        output_dir = st.text_input(
-            "Parent folder path:",
-            value=st.session_state.output_dir or default_dir,
-            label_visibility="collapsed",
-            placeholder="Enter parent folder path or use Browse button...",
-        )
-
-    with col_btn:
-        if st.button("Browse...", use_container_width=True):
-            selected = select_folder_dialog()
-            if selected:
-                output_dir = selected
-                st.session_state.output_dir = selected
-                st.rerun()
-
-    st.session_state.output_dir = output_dir
-
-    if output_dir:
-        report_dir = os.path.join(output_dir, "Manager report")
-        if os.path.isdir(report_dir):
-            st.info(f"Output: `{report_dir}` (already exists)")
-        elif os.path.isdir(output_dir):
-            st.info(f"Output: `{report_dir}` (will be created)")
-        else:
-            st.warning(f"Output: `{report_dir}` (folders will be created automatically)")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 3: Generate Reports (with Region filter)
-# ══════════════════════════════════════════════════════════════════════════════
-if files_ready and st.session_state.output_dir:
-    st.divider()
-    st.header("Step 3 — Generate Manager Reports")
-
-    # Actual output directory: parent / Manager report
-    actual_output_dir = os.path.join(st.session_state.output_dir, "Manager report")
+    st.header("Step 2 — Generate Manager Reports")
 
     if st.session_state.reports_generated:
         results = st.session_state.report_results
@@ -394,7 +349,6 @@ if files_ready and st.session_state.output_dir:
         with st.expander("Region distribution"):
             for region, count in sorted(results["region_counts"].items()):
                 st.write(f"**{region}**: {count} reports")
-        st.caption(f"Saved to: `{actual_output_dir}`")
     else:
         # Region selection before generation
         available_regions = st.session_state.available_regions or []
@@ -408,12 +362,11 @@ if files_ready and st.session_state.output_dir:
         )
 
         if gen_regions:
-            st.caption(
-                f"Reports will be saved to `{actual_output_dir}` "
-                f"with Region subfolders."
-            )
-
             if st.button("Generate Reports", type="primary"):
+                # Create temporary directory for report generation
+                temp_dir = tempfile.mkdtemp()
+                st.session_state.temp_dir = temp_dir
+
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
@@ -424,7 +377,7 @@ if files_ready and st.session_state.output_dir:
                 with st.spinner("Generating reports..."):
                     results = generate_all_reports(
                         st.session_state.attainment_df,
-                        actual_output_dir,
+                        temp_dir,
                         progress_callback=on_progress,
                         selected_regions=gen_regions,
                         fiscal_year=st.session_state.fiscal_year,
@@ -477,21 +430,44 @@ if files_ready and st.session_state.output_dir:
             }
             zip_file.writestr("manager_metadata.json", json.dumps(metadata, indent=2))
 
-        # Download button
-        st.download_button(
-            label="📦 Download All Reports (.zip)",
-            data=zip_buffer.getvalue(),
-            file_name=f"Manager_Reports_{fiscal_year}_{datetime.today().strftime('%Y%m%d')}.zip",
-            mime="application/zip",
-            type="primary"
-        )
+        # Download buttons
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.download_button(
+                label="📦 Download Reports (.zip)",
+                data=zip_buffer.getvalue(),
+                file_name=f"Manager_Reports_{fiscal_year}_{datetime.today().strftime('%Y%m%d')}.zip",
+                mime="application/zip",
+                type="primary",
+                use_container_width=True
+            )
+
+        with col2:
+            # Check if EmailManager.exe exists
+            exe_path = os.path.join(os.path.dirname(__file__), "dist", "EmailManager.exe")
+            if os.path.exists(exe_path):
+                with open(exe_path, "rb") as f:
+                    st.download_button(
+                        label="📧 Download Email Manager",
+                        data=f,
+                        file_name="EmailManager.exe",
+                        mime="application/octet-stream",
+                        use_container_width=True
+                    )
+            else:
+                st.button(
+                    "📧 Email Manager (not built)",
+                    disabled=True,
+                    use_container_width=True,
+                    help="Run 'pyinstaller email_manager.spec' to build EmailManager.exe"
+                )
 
         st.info("""
 **✅ Reports generated successfully!**
 
 **📥 Next Steps:**
-1. Download the .zip file using the button above
-2. Use the **Email Manager** desktop app to send reports via Outlook:
-   - Download: [EmailManager.exe](https://github.com/LI-JBLEE/AttnRptAutomation/releases/latest)
-   - Load the .zip file → Select managers → Send emails
+1. **Download Reports (.zip)**: Contains all manager reports + metadata
+2. **Download Email Manager**: Windows app for sending emails via Outlook
+3. Run EmailManager.exe → Load .zip → Send emails
         """)

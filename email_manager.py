@@ -1,10 +1,13 @@
 """
 GSC Email Manager - Standalone Email Operations Tool
 Loads report .zip files from web app and manages Outlook email operations.
+
+This is a self-contained executable - all dependencies are embedded.
 """
 
 import os
 import sys
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
@@ -12,14 +15,182 @@ import zipfile
 import json
 import tempfile
 from datetime import datetime
+import pandas as pd
 
-from create_email_drafts import (
-    create_drafts_batch,
-    get_drafts_from_folder,
-    send_drafts_batch,
-    clean_display_name,
-    load_email_mapping
-)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Embedded functions from create_email_drafts.py (for standalone .exe)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def clean_display_name(full_name):
+    """Clean manager name for email display: remove ID and any parenthesized content."""
+    # Remove trailing (ID)
+    name = re.sub(r'\s*\(\d+\)\s*$', '', full_name).strip()
+    # Remove remaining parenthesized aliases
+    name = re.sub(r'\s*\([^)]*\)', '', name).strip()
+    return name
+
+
+def get_email_subject(fiscal_year="FY26"):
+    """Generate email subject with fiscal year."""
+    return f"{fiscal_year} Attainment Report - {{manager_name}}"
+
+
+def get_email_html(fiscal_year="FY26"):
+    """Generate email HTML body with fiscal year."""
+    return f"""\
+<html>
+<body style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #333;">
+<p>Hi {{manager_name}},</p>
+
+<p>Please find attached your <b>{fiscal_year} Attainment Report</b>.</p>
+
+<p>This report includes attainment data for your team, organized by hierarchy
+with quarterly, half-year, and annual breakdowns.</p>
+
+<p>If you have any questions about the data, please reach out to the
+Sales Compensation team.</p>
+
+<p>Best regards,<br>
+Sales Compensation</p>
+</body>
+</html>
+"""
+
+
+def load_email_mapping(sales_comp_file):
+    """Load {emp_id_str: email} mapping from Sales Compensation Report."""
+    df = pd.read_excel(sales_comp_file, sheet_name="Sheet1", header=3)
+
+    email_map = {}
+    for _, row in df.iterrows():
+        emp_id = row.get("Employee ID")
+        email = row.get("Email - Work")
+        if pd.notna(emp_id) and pd.notna(email):
+            clean_id = str(emp_id).lstrip("0") or "0"
+            email_map[clean_id] = str(email).strip()
+
+    return email_map
+
+
+def get_or_create_drafts_subfolder(outlook, folder_name="Manager Report"):
+    """Get or create a subfolder under the Outlook Drafts folder."""
+    ns = outlook.GetNamespace("MAPI")
+    drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
+
+    # Check if subfolder already exists
+    for i in range(drafts.Folders.Count):
+        folder = drafts.Folders.Item(i + 1)  # 1-indexed
+        if folder.Name == folder_name:
+            return folder
+
+    # Create subfolder
+    return drafts.Folders.Add(folder_name)
+
+
+def create_draft(outlook, to_email, manager_name, attachment_path,
+                 target_folder=None, fiscal_year="FY26"):
+    """Create a single Outlook draft email with the report attached."""
+    mail = outlook.CreateItem(0)  # olMailItem
+    mail.To = to_email
+    subject_template = get_email_subject(fiscal_year)
+    html_template = get_email_html(fiscal_year)
+    mail.Subject = subject_template.format(manager_name=manager_name)
+    mail.HTMLBody = html_template.format(manager_name=manager_name)
+    mail.Attachments.Add(os.path.abspath(attachment_path))
+    mail.Save()  # Save as Draft — does NOT send
+
+    # Move to target subfolder if specified
+    if target_folder is not None:
+        mail.Move(target_folder)
+
+
+def create_drafts_batch(matched_list, target_folder_name="Manager Report",
+                        progress_callback=None, fiscal_year="FY26"):
+    """Create Outlook drafts for a list of matched managers."""
+    import win32com.client
+    outlook = win32com.client.Dispatch("Outlook.Application")
+    target_folder = get_or_create_drafts_subfolder(outlook, target_folder_name)
+
+    total = len(matched_list)
+    created = 0
+    failed = 0
+    failures_detail = []
+
+    for i, (filepath, clean_name, email) in enumerate(matched_list, 1):
+        try:
+            create_draft(outlook, email, clean_name, filepath, target_folder, fiscal_year)
+            created += 1
+        except Exception as e:
+            failed += 1
+            failures_detail.append((clean_name, email, str(e)))
+
+        if progress_callback:
+            progress_callback(i, total, clean_name)
+
+    return {
+        "created": created,
+        "failed": failed,
+        "failures_detail": failures_detail,
+    }
+
+
+def get_drafts_from_folder(outlook, folder_name="Manager Report"):
+    """Get all draft emails from Outlook Drafts/folder_name subfolder."""
+    ns = outlook.GetNamespace("MAPI")
+    drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
+
+    # Find the subfolder
+    for i in range(drafts.Folders.Count):
+        folder = drafts.Folders.Item(i + 1)  # 1-indexed
+        if folder.Name == folder_name:
+            draft_items = []
+            for j in range(folder.Items.Count):
+                item = folder.Items.Item(j + 1)
+                draft_items.append({
+                    "subject": item.Subject,
+                    "to": item.To,
+                    "index": j + 1,
+                    "item": item,
+                })
+            return folder, draft_items
+
+    return None, []
+
+
+def send_drafts_batch(outlook, folder, selected_indices, progress_callback=None):
+    """Send selected draft emails from a folder."""
+    sent = 0
+    failed = 0
+    failures_detail = []
+    total = len(selected_indices)
+
+    for i, idx in enumerate(selected_indices, 1):
+        try:
+            item = folder.Items.Item(idx)
+            subject = item.Subject
+            item.Send()  # Send the email immediately
+            sent += 1
+
+            if progress_callback:
+                progress_callback(i, total, subject)
+        except Exception as e:
+            failed += 1
+            failures_detail.append((subject if 'subject' in locals() else f"Index {idx}", str(e)))
+
+            if progress_callback:
+                progress_callback(i, total, f"FAILED: {subject if 'subject' in locals() else f'Index {idx}'}")
+
+    return {
+        "sent": sent,
+        "failed": failed,
+        "failures_detail": failures_detail,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EmailManager GUI Application
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 class EmailManagerApp:
