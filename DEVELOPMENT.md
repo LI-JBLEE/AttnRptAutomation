@@ -7,27 +7,29 @@
 - [File Structure](#file-structure)
 - [Data Flow](#data-flow)
 - [Module Reference](#module-reference)
-  - [app.py — Streamlit UI](#apppy--streamlit-ui)
+  - [app.py — Streamlit Web App](#apppy--streamlit-web-app)
+  - [email_manager.py — EmailManager GUI](#email_managerpy--emailmanager-gui)
   - [generate_manager_reports.py — Report Generator](#generate_manager_reportspy--report-generator)
-  - [create_email_drafts.py — Outlook Email Draft Creator](#create_email_draftspy--outlook-email-draft-creator)
+  - [create_email_drafts.py — CLI Email Draft Creator](#create_email_draftspy--cli-email-draft-creator)
 - [Input Data Specifications](#input-data-specifications)
 - [Output Specifications](#output-specifications)
 - [Key Design Decisions](#key-design-decisions)
 - [Known Issues and Fixes](#known-issues-and-fixes)
 - [Dependencies](#dependencies)
-- [Deployment and Sharing](#deployment-and-sharing)
+- [Build and Deployment](#build-and-deployment)
 
 ---
 
 ## Project Overview
 
-Automates the end-to-end workflow for generating per-manager attainment reports and creating Outlook email drafts with those reports attached.
+Automates the end-to-end workflow for generating per-manager attainment reports and distributing them via Outlook email.
 
-**Two interfaces are available:**
-1. **Streamlit Web UI** (`app.py`) — 5-step wizard with file upload, folder selection, region/manager filtering, and Outlook draft generation.
-2. **CLI scripts** — `generate_manager_reports.py` and `create_email_drafts.py` can be run independently from the command line.
+**Two-component architecture:**
+1. **Streamlit Web App** (`app.py`) — Cloud-hosted report generation with .zip download
+2. **EmailManager.exe** (`email_manager.py`) — Standalone Windows desktop app for Outlook email operations
 
 **GitHub Repository:** `https://github.com/LI-JBLEE/AttnRptAutomation`
+**Live Web App:** `https://manager-attn-report.streamlit.app/`
 
 ---
 
@@ -35,42 +37,58 @@ Automates the end-to-end workflow for generating per-manager attainment reports 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  app.py (Streamlit UI — 5-Step Wizard)                      │
+│  Streamlit Web App (app.py)                                  │
 │  ┌────────────┐ ┌────────────┐ ┌──────────────────────────┐ │
-│  │ Step 1-2   │→│  Step 3    │→│    Step 4-5              │ │
-│  │ File Upload│ │ Generate   │ │ Region/Manager Select    │ │
-│  │ Folder Pick│ │ Reports    │ │ → Outlook Email Drafts   │ │
+│  │  Step 1    │→│  Step 2    │→│  Download                │ │
+│  │ File Upload│ │ Generate   │ │ Reports.zip              │ │
+│  │ (2 files)  │ │ Reports    │ │ + EmailManager.zip       │ │
 │  └────────────┘ └────────────┘ └──────────────────────────┘ │
-│       ↓              ↓              ↓                       │
+│       ↓              ↓                                       │
 │  generate_manager_reports.py   create_email_drafts.py       │
-│  (core functions imported)     (core functions imported)    │
+│  (core functions imported)     (validation functions only)  │
+└─────────────────────────────────────────────────────────────┘
+                         │
+                    .zip download
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│  EmailManager.exe (email_manager.py — standalone)           │
+│  ┌────────────┐ ┌────────────┐ ┌──────────────────────────┐ │
+│  │  Step 1    │→│  Step 2    │→│  Step 3                  │ │
+│  │ Load .zip  │ │ Select     │ │ Create Drafts tab:       │ │
+│  │ or folder  │ │ Recipients │ │  - Edit subject/body     │ │
+│  │            │ │ (regions + │ │  - Create Outlook drafts │ │
+│  │            │ │  managers) │ │ Send Drafts tab:         │ │
+│  │            │ │            │ │  - Load/send from Outlook│ │
+│  └────────────┘ └────────────┘ └──────────────────────────┘ │
+│       ↓                              ↓                       │
+│  Embedded functions              win32com.client             │
+│  (self-contained .exe)           (Outlook COM)               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Both CLI scripts expose reusable functions that `app.py` imports directly. The `main()` functions in each CLI script are preserved for standalone usage.
+The web app generates reports and bundles them into a .zip with metadata. The EmailManager.exe loads that .zip and handles all Outlook operations locally.
 
 ---
 
 ## File Structure
 
 ```
-Attainment report automation/
-├── app.py                          # Streamlit UI (5-step wizard)
+AttnRptAutomation/
+├── app.py                          # Streamlit web app (Steps 1-2 + download)
+├── email_manager.py                # EmailManager GUI (Tkinter, standalone .exe source)
+├── email_manager.spec              # PyInstaller build configuration
 ├── generate_manager_reports.py     # Report generation engine
-├── create_email_drafts.py          # Outlook email draft creator
-├── .gitignore                      # Excludes .xlsx, .csv, Manager report/, etc.
+├── create_email_drafts.py          # CLI email draft creator (legacy)
+├── requirements.txt                # Python dependencies
+├── .streamlit/
+│   └── config.toml                 # Streamlit theme (primaryColor: #0078D4)
+├── dist/
+│   └── EmailManager.exe            # Built executable (~13MB)
+├── build/                          # PyInstaller build artifacts (not in git)
 ├── DEVELOPMENT.md                  # This file
-│
-├── FY26_Global_Attainment_Club.xlsx          # Input: attainment data (not in git)
-├── Sales Compensation Report (Daily) *.xlsx  # Input: email mapping (not in git)
-│
-└── Manager report/                 # Generated output (not in git)
-    ├── APAC/
-    │   └── FY26_Attainment_{Name}_{YYYYMMDD}.xlsx
-    ├── CHINA/
-    ├── EMEA/
-    ├── LATAM/
-    └── NAMER/
+├── README.md                       # Project overview (Korean)
+├── USER_MANUAL.md                  # User manual (English)
+└── .gitignore                      # Excludes .xlsx, .csv, build/, etc.
 ```
 
 ---
@@ -78,49 +96,63 @@ Attainment report automation/
 ## Data Flow
 
 ```
-Step 1: Upload Files
-  FY26_Global_Attainment_Club.xlsx ──→ attainment_df (pandas DataFrame)
-  Sales Compensation Report *.xlsx ──→ email_map {emp_id: email}
-
-Step 2: Choose Output Folder
-  User selects parent folder ──→ reports saved to {parent}/Manager report/{Region}/
-
-Step 3: Generate Reports
-  attainment_df ──→ generate_all_reports() ──→ 688 Excel files in Region subfolders
-
-Step 4: Select Recipients
-  Scan generated files ──→ match to emails via Employee ID ──→ user filters by Region/Manager
-
-Step 5: Create Email Drafts
-  selected managers ──→ create_drafts_batch() ──→ Outlook Drafts/Manager Report folder
+┌─ Web App (Streamlit Cloud) ─────────────────────────────────┐
+│                                                              │
+│  Step 1: Upload Files                                        │
+│    Attainment Report (.xlsx) ──→ attainment_df (DataFrame)   │
+│    Sales Comp Report (.xlsx) ──→ email_map {emp_id: email}   │
+│                                                              │
+│  Step 2: Generate Reports                                    │
+│    attainment_df ──→ generate_all_reports() ──→ Excel files  │
+│    (generated in temp directory, in-memory)                   │
+│                                                              │
+│  Download: Bundle into .zip                                  │
+│    Excel files + manager_metadata.json ──→ Reports.zip       │
+│    EmailManager.exe ──→ EmailManager.zip                     │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                         .zip files
+                              ↓
+┌─ EmailManager.exe (local Windows PC) ───────────────────────┐
+│                                                              │
+│  Step 1: Load .zip                                           │
+│    Reports.zip ──→ extract to temp dir ──→ load metadata     │
+│                                                              │
+│  Step 2: Select Recipients                                   │
+│    Region filter + manager list ──→ selected managers        │
+│                                                              │
+│  Step 3: Email Operations                                    │
+│    Create Drafts tab:                                        │
+│      Edit subject/body templates ──→ create_drafts_batch()   │
+│      ──→ Outlook Drafts/Manager Report folder                │
+│    Send Drafts tab:                                          │
+│      Load from Outlook ──→ select ──→ send_drafts_batch()    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Module Reference
 
-### app.py — Streamlit UI
+### app.py — Streamlit Web App
 
-**Run:** `streamlit run app.py`
+**Run locally:** `python -m streamlit run app.py`
+**Deployed at:** `https://manager-attn-report.streamlit.app/`
 
-**5-Step Wizard:**
+**2-Step Wizard + Download:**
 
 | Step | Description | Key Components |
 |------|-------------|----------------|
-| 1 | Upload attainment + sales comp Excel files | `st.file_uploader`, validation functions |
-| 2 | Choose parent output folder | `st.text_input` + tkinter `filedialog.askdirectory()` |
-| 3 | Select regions, generate reports | `st.multiselect`, `st.progress`, calls `generate_all_reports()` |
-| 4 | Filter by Region + Manager for email recipients | `st.multiselect`, metrics display |
-| 5 | Generate Outlook email drafts | Calls `create_drafts_batch()`, progress bar |
+| 1 | Upload attainment + sales comp Excel files | `st.file_uploader` with dynamic keys for reset, validation functions |
+| 2 | Select regions, generate reports | `st.multiselect`, `st.progress`, calls `generate_all_reports()` |
+| Download | .zip of reports + EmailManager.zip | In-memory zip creation, `st.download_button` |
 
 **Key Functions:**
 
 | Function | Purpose |
 |----------|---------|
-| `select_folder_dialog()` | Opens native Windows folder picker via tkinter |
 | `validate_attainment_file(uploaded_file)` | Validates "in" sheet and `Level_1_Manager` column; renames `Plan_Period;MBO_Description` → `Plan_Period` |
 | `validate_sales_comp_file(uploaded_file)` | Validates "Sheet1" (header=3), builds `{emp_id: email}` map |
-| `build_manager_list(attainment_df, email_map, output_dir)` | Scans generated report files, matches to emails, returns list of manager dicts |
 
 **Session State Keys:**
 
@@ -128,13 +160,68 @@ Step 5: Create Email Drafts
 |-----|------|-------------|
 | `attainment_df` | DataFrame | Uploaded attainment data |
 | `email_map` | dict | `{emp_id_str: email}` mapping |
-| `output_dir` | str | User-selected parent folder path |
-| `reports_generated` | bool | Whether Step 3 is complete |
+| `reports_generated` | bool | Whether Step 2 is complete |
 | `report_results` | dict | `{total, region_counts, managers}` |
-| `manager_list` | list | Manager dicts for Steps 4-5 |
 | `available_regions` | list | Sorted region strings from attainment data |
+| `fiscal_year` | str | Detected fiscal year (e.g. "FY26") |
+| `temp_dir` | str | Temp directory for generated reports |
+| `reset_count` | int | Incremented on reset to force new widget keys |
 
-**Custom CSS:** Gradient title, blue left-border step headers (1.15rem), light blue multiselect tags (`#dbeafe`), rounded buttons/cards, styled metrics.
+**Reset Mechanism:**
+The Reset button increments `reset_count` and clears all session state. File uploader widgets use `key=f"attainment_uploader_{rc}"` so they are recreated as new widgets, clearing previously uploaded files.
+
+**Theme:** `.streamlit/config.toml` sets `primaryColor = "#0078D4"` (Microsoft blue).
+
+---
+
+### email_manager.py — EmailManager GUI
+
+**Run:** `python email_manager.py` or `dist/EmailManager.exe`
+
+Self-contained Tkinter GUI that embeds all email-related functions (no imports from other project files). Built as a standalone .exe via PyInstaller.
+
+**Class: `EmailManagerApp`**
+
+| Method | Purpose |
+|--------|---------|
+| `_create_widgets()` | Builds full GUI: load, recipients, email template editor, send tabs |
+| `_load_zip_file()` | Extracts .zip, loads `manager_metadata.json`, sets fiscal year |
+| `_load_folder()` | Scans folder for report files, prompts for Sales Comp file |
+| `_update_region_checkboxes()` | Creates region filter checkboxes from loaded data |
+| `_update_manager_list()` | Filters and displays managers based on region selection |
+| `_get_default_subject()` | Returns `"{fiscal_year} Attainment Report - {manager_name}"` |
+| `_get_default_body()` | Returns default plain text email body with placeholders |
+| `_reset_template()` | Restores subject and body fields to defaults |
+| `_create_drafts()` | Reads template from UI, runs `create_drafts_batch()` in thread |
+| `_load_outlook_drafts()` | Loads drafts from Outlook Drafts/Manager Report folder |
+| `_send_drafts()` | Sends selected drafts via `send_drafts_batch()` in thread |
+
+**Email Template Editor (Create Drafts tab):**
+- Subject field (`ttk.Entry`) — editable, pre-filled with default template
+- Body field (`tk.Text`, 8 lines) — editable, pre-filled with default plain text
+- Placeholders: `{manager_name}`, `{fiscal_year}` — resolved at draft creation time
+- "Reset to Default" button restores default templates
+
+**Embedded Functions (not imported, copied for standalone .exe):**
+
+| Function | Purpose |
+|----------|---------|
+| `clean_display_name(full_name)` | Removes IDs and parenthesized aliases from names |
+| `plain_text_to_html(text)` | Converts plain text to HTML with Calibri font styling |
+| `get_email_subject(fiscal_year)` | Default subject template |
+| `get_email_html(fiscal_year)` | Default HTML body template |
+| `create_draft(outlook, ...)` | Creates single Outlook draft; accepts custom `subject_template` and `body_text` |
+| `create_drafts_batch(matched_list, ...)` | Creates drafts for multiple managers; passes custom templates through |
+| `get_drafts_from_folder(outlook, folder_name)` | Retrieves drafts from Outlook subfolder using EntryID |
+| `send_drafts_batch(draft_items, ...)` | Sends drafts; creates own COM object per thread |
+
+**Outlook COM Integration:**
+- Uses `win32com.client.Dispatch("Outlook.Application")`
+- `GetDefaultFolder(16)` = olFolderDrafts
+- Creates "Manager Report" subfolder under Drafts
+- Draft creation and sending run in background threads
+- Each thread creates its own COM object (COM objects cannot be marshalled across threads)
+- Drafts are referenced by `EntryID` (persistent identifier) for reliable retrieval
 
 ---
 
@@ -150,39 +237,25 @@ Generates one Excel report per L1 manager with recursive hierarchy structure, ou
 |----------|-----------|---------|
 | `extract_manager_name(full_name)` | `str → str` | Clean name from `"First Last (ID)"` format |
 | `extract_manager_id(full_name)` | `str → str\|None` | Employee ID from `"First Last (ID)"` format |
-| `sanitize_filename(name)` | `str → str` | Windows-safe filename; strips parenthesized content (e.g. Chinese aliases) |
+| `sanitize_filename(name)` | `str → str` | Windows-safe filename; strips parenthesized content |
 | `get_all_regions(source_df)` | `DataFrame → list[str]` | Sorted unique region names |
-| `generate_all_reports(source_df, output_dir, progress_callback=None, selected_regions=None)` | See below | `{total, region_counts, managers}` |
+| `get_fiscal_year(source_df)` | `DataFrame → str` | Fiscal year string (e.g. "FY26") from data |
+| `generate_all_reports(...)` | See below | `{total, region_counts, managers}` |
 
 **`generate_all_reports()` Details:**
 
 ```python
 def generate_all_reports(source_df, output_dir, progress_callback=None,
-                         selected_regions=None):
+                         selected_regions=None, fiscal_year=None):
     """
-    Args:
-        source_df: DataFrame with Plan_Period column already renamed
-        output_dir: e.g. "C:/Reports/Manager report"
-        progress_callback: callable(current, total, message) for UI updates
-        selected_regions: list of region strings to filter by (None = all)
-
     Returns:
         {
-            "total": int,             # number of managers processed
+            "total": int,
             "region_counts": dict,    # {"APAC": 85, "EMEA": 210, ...}
             "managers": list          # [(full_name, region, safe_name, filepath), ...]
         }
     """
 ```
-
-**Internal Functions (not exported but important for understanding):**
-
-| Function | Purpose |
-|----------|---------|
-| `build_id_mappings(df)` | Builds `{emp_id: PersonName}`, set of L1 manager IDs, `{emp_id: L1ManagerString}` |
-| `build_manager_region_map(df, person_id_to_name)` | Maps `L1_Manager_string → Region` using ID matching, falls back to mode of direct reports |
-| `build_hierarchy_data(df, manager, ...)` | Recursively builds hierarchical data list with depth tracking, section headers, and circular-reference guards |
-| `write_report(wb, manager, hierarchy_data, columns)` | Writes formatted Excel report: title bar, headers, color-coded data, outline grouping, freeze panes |
 
 **Report Excel Format:**
 - Row 1: Title bar (dark navy, merged)
@@ -193,61 +266,21 @@ def generate_all_reports(source_df, output_dir, progress_callback=None,
 - Color coding: green (>=100%), yellow (80-99%), red (<80%) for attainment columns
 - Alternating row colors by hierarchy depth level
 
-**File Cleanup Behavior:**
-- Only deletes `FY26_Attainment_*.xlsx` files in region subfolders being regenerated
-- Does NOT delete the entire output directory (previous bug fix)
-
 ---
 
-### create_email_drafts.py — Outlook Email Draft Creator
+### create_email_drafts.py — CLI Email Draft Creator
 
 **CLI Usage:** `python create_email_drafts.py "Manager report/APAC" [--dry-run]`
 
-**Key Exported Functions (used by app.py):**
+Legacy standalone script for creating Outlook drafts from the command line. Functions are also imported by `app.py` for validation (`load_email_mapping`, `clean_display_name`).
 
-| Function | Signature | Returns |
-|----------|-----------|---------|
-| `clean_display_name(full_name)` | `str → str` | Name without ID or parenthesized aliases |
-| `load_email_mapping(sales_comp_file)` | `path → dict` | `{emp_id_str: email}` from Sales Comp report |
-| `create_drafts_batch(matched_list, target_folder_name, progress_callback)` | See below | `{created, failed, failures_detail}` |
-
-**`create_drafts_batch()` Details:**
-
-```python
-def create_drafts_batch(matched_list, target_folder_name="Manager Report",
-                        progress_callback=None):
-    """
-    Args:
-        matched_list: [(filepath, clean_name, email), ...]
-        target_folder_name: Outlook Drafts subfolder name
-        progress_callback: callable(current, total, message)
-
-    Returns:
-        {
-            "created": int,
-            "failed": int,
-            "failures_detail": [(name, email, error_str), ...]
-        }
-    """
-```
-
-**Outlook COM Integration:**
-- Uses `win32com.client.Dispatch("Outlook.Application")` for Outlook automation
-- `GetDefaultFolder(16)` = olFolderDrafts
-- Creates "Manager Report" subfolder under Drafts via `get_or_create_drafts_subfolder()`
-- `mail.Save()` saves as draft (does NOT send)
-- `mail.Move(target_folder)` moves draft into the subfolder
-
-**Email Template:**
-- Subject: `"FY26 Attainment Report - {manager_name}"`
-- Body: HTML format (Calibri font, professional styling)
-- Attachment: the manager's Excel report file
+Note: `email_manager.py` embeds its own copies of the email functions for standalone .exe operation — it does not import from this file.
 
 ---
 
 ## Input Data Specifications
 
-### Global Attainment Report (`FY26_Global_Attainment_Club.xlsx`)
+### Global Attainment Report
 
 | Property | Value |
 |----------|-------|
@@ -255,7 +288,7 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
 | Key columns | `Level_1_Manager`, `Level_2_Manager`, `Person Name`, `LI_EMP_ID`, `Region` |
 | Special column | `Plan_Period;MBO_Description` (renamed to `Plan_Period` at load time) |
 | Name format | `"First Last (EmpID)"` — e.g. `"John Smith (12345)"` |
-| Typical size | ~6,595 rows, 64 columns, 688 unique L1 managers |
+| Fiscal Year detection | From `Fiscal Year` column values |
 | Regions | APAC, CHINA, EMEA, LATAM, NAMER |
 
 ### Sales Compensation Report
@@ -263,54 +296,82 @@ def create_drafts_batch(matched_list, target_folder_name="Manager Report",
 | Property | Value |
 |----------|-------|
 | Sheet name | `Sheet1` |
-| Header row | Row 3 (0-indexed), i.e. `header=3` in pandas |
+| Header row | Row 4 (1-indexed), i.e. `header=3` in pandas |
 | Key columns | `Employee ID`, `Email - Work` |
 | Employee ID format | Zero-padded string, e.g. `"000081"` |
-| ID normalization | Leading zeros are stripped to match attainment IDs: `"000081"` → `"81"` |
+| ID normalization | Leading zeros stripped: `"000081"` → `"81"` |
 
 ---
 
 ## Output Specifications
 
-### Report Files
+### Report .zip File
 
-- **Path pattern:** `{parent_folder}/Manager report/{Region}/FY26_Attainment_{SafeName}_{YYYYMMDD}.xlsx`
-- **Filename sanitization:** Removes parenthesized content (e.g. Chinese name aliases like `"(黄策)"`), replaces illegal Windows filename characters with `_`
-- **One file per L1 manager**, containing all direct and indirect reports in a recursive hierarchy
+- **Filename:** `Manager_Reports_{FY}_{YYYYMMDD_HHMMSS}.zip`
+- **Contents:**
+  - `{Region}/FY26_Attainment_{SafeName}_{YYYYMMDD}.xlsx` — per-manager Excel reports
+  - `manager_metadata.json` — manager name, email, region, filepath mappings
+
+### manager_metadata.json
+
+```json
+{
+  "fiscal_year": "FY26",
+  "generated_date": "2026-02-13",
+  "total_reports": 688,
+  "managers": [
+    {
+      "name": "John Smith",
+      "safe_name": "John_Smith",
+      "region": "NAMER",
+      "email": "john.smith@company.com",
+      "filepath": "NAMER/FY26_Attainment_John_Smith_20260213.xlsx"
+    }
+  ]
+}
+```
 
 ### Outlook Email Drafts
 
-- **Location:** Outlook Drafts folder → "Manager Report" subfolder
-- **One draft per selected manager**, with the corresponding report file attached
-- **Not sent** — user reviews and sends manually from Outlook
+- **Location:** Outlook Drafts → "Manager Report" subfolder
+- **Subject:** Configurable template, default: `{fiscal_year} Attainment Report - {manager_name}`
+- **Body:** Configurable plain text template, converted to HTML (Calibri font)
+- **Attachment:** Manager's Excel report file
+- **Template variables:** `{manager_name}`, `{fiscal_year}` — resolved at draft creation time
 
 ---
 
 ## Key Design Decisions
 
+### Two-Component Architecture
+The web app handles report generation (cross-platform, cloud-hosted) while email operations are handled by a local Windows .exe. This separation allows:
+- Report generation from any device with a browser
+- Email sending only from Windows PCs with Outlook (COM requirement)
+- No email addresses uploaded to the cloud (security)
+
+### Standalone .exe (EmailManager)
+`email_manager.py` embeds all email-related functions rather than importing from `create_email_drafts.py`. This allows PyInstaller to produce a single self-contained .exe without requiring other project files.
+
+### Customizable Email Templates
+Email subject and body are editable in the EmailManager GUI. Templates use `{manager_name}` and `{fiscal_year}` placeholders that are resolved at draft creation time. Plain text body input is converted to HTML via `plain_text_to_html()`.
+
 ### ID-Based Matching
-Employee IDs (extracted from `"Name (ID)"` format) are used for matching across all data sources because `Person Name` and `Level_1_Manager` strings can differ (e.g. name aliases, parenthesized Chinese names).
+Employee IDs (extracted from `"Name (ID)"` format) are used for matching across all data sources because name strings can differ (aliases, parenthesized Chinese names).
 
 ### Leading Zero Normalization
-The Sales Comp report uses zero-padded IDs (`"000081"`) while attainment data uses plain IDs (`"81"`). All IDs are normalized by stripping leading zeros: `str(emp_id).lstrip("0") or "0"`.
+Sales Comp uses zero-padded IDs (`"000081"`), attainment data uses plain IDs (`"81"`). All IDs are normalized by `str(emp_id).lstrip("0") or "0"`.
 
 ### Parenthesized Alias Handling
-Some manager names contain parenthesized aliases (e.g. Chinese names like `"Ce Huang (黄策)"`). These are:
-- Stripped from filenames via `sanitize_filename()`
-- Stripped from email display names via `clean_display_name()`
-- Stripped from report titles via regex in `write_report()`
+Names like `"Ce Huang (黄策)"` are stripped from filenames (`sanitize_filename()`), email display names (`clean_display_name()`), and report titles.
 
-### Safe File Cleanup
-Report regeneration only deletes existing `FY26_Attainment_*.xlsx` files in the specific region subfolders being regenerated. This prevents accidentally destroying user data in the parent folder (a previous bug caused by `shutil.rmtree()`).
+### COM Threading
+Outlook COM objects must be created and used in the same thread. `create_drafts_batch()` and `send_drafts_batch()` each create their own COM instances. Draft items are referenced by `EntryID` (persistent Outlook identifier) rather than COM object references.
 
-### Manager Report Subfolder
-The user selects a parent folder, and reports are automatically saved under a `Manager report` subfolder with Region subfolders inside. This keeps generated reports organized and separate from other files in the parent folder.
+### Reset Mechanism (Web App)
+Streamlit's `file_uploader` retains files when the widget key stays the same. The Reset button increments a `reset_count` counter used in widget keys (`f"attainment_uploader_{rc}"`) to force widget re-creation.
 
-### Region-Based Filtering
-Both report generation (Step 3) and email draft creation (Step 4) support region filtering. Users can select specific regions to process, reducing generation time and allowing targeted distribution.
-
-### Folder Picker
-A native Windows folder picker dialog (via tkinter `filedialog.askdirectory()`) is integrated into the Streamlit UI alongside a manual text input field.
+### .zip Download for .exe
+`EmailManager.exe` is wrapped in a .zip file for download to avoid browser .exe download blocking. Windows SmartScreen warning still appears on first run (requires code signing to eliminate).
 
 ---
 
@@ -318,46 +379,80 @@ A native Windows folder picker dialog (via tkinter `filedialog.askdirectory()`) 
 
 | Issue | Root Cause | Fix Applied |
 |-------|-----------|-------------|
-| `PermissionError` when generating reports | `shutil.rmtree()` deleted the entire user-selected folder, including existing business data and OneDrive-locked files | Removed `shutil.rmtree()`, now only deletes `FY26_Attainment_*.xlsx` files in targeted region subfolders |
-| Email match failures (~2 of 688) | Some managers exist in attainment data but not in the Sales Comp report | Displayed as warnings in UI; does not block other drafts |
-| `pip install streamlit` fails silently | pip not on PATH in some environments | Use `python -m pip install streamlit` instead |
-| Name mismatch between Person Name and Level_1_Manager | Same person may have different name strings in different columns | ID-based matching resolves this; names are matched by employee ID, not string comparison |
-| Chinese name aliases in filenames/emails | Names like `"Ce Huang (黄策)"` cause issues in filenames and email subjects | `sanitize_filename()` and `clean_display_name()` strip all parenthesized content |
+| `PermissionError` when generating reports | `shutil.rmtree()` deleted entire user folder | Only deletes `FY*_Attainment_*.xlsx` files in targeted region subfolders |
+| Email match failures (~2 of 688) | Managers in attainment data but not in Sales Comp | Displayed as warnings; does not block other drafts |
+| Reset button not clearing uploaded files | Streamlit `file_uploader` retains files when key stays the same | Dynamic widget keys using `reset_count` counter |
+| COM "marshalled for different thread" error | Outlook COM objects shared across threads | Each thread creates its own COM object |
+| "Inline response" send failure | Draft is in reply/forward mode | User opens draft in new window, saves, retries |
+| Browser blocks .exe download | Browsers block direct .exe downloads | Wrapped in .zip file |
+| SmartScreen warning on .exe | Unsigned executable | User instructions to bypass; code signing for future |
 
 ---
 
 ## Dependencies
 
+### Web App (Streamlit Cloud)
+
 ```
-pip install streamlit pandas openpyxl pywin32
+pip install streamlit pandas openpyxl
 ```
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `streamlit` | latest | Web UI framework |
-| `pandas` | latest | Excel file loading and data manipulation |
-| `openpyxl` | latest | Excel file writing with formatting |
-| `pywin32` | latest | Outlook COM automation (`win32com.client`) |
-| `tkinter` | built-in | Native Windows folder picker dialog |
+### EmailManager.exe (Windows only)
 
-**Platform requirement:** Windows only (Outlook COM requires desktop Outlook installed)
+```
+pip install pywin32
+```
+
+### Full Development Environment
+
+```
+pip install -r requirements.txt
+pip install pyinstaller  # for building .exe
+```
+
+| Package | Purpose |
+|---------|---------|
+| `streamlit` | Web UI framework |
+| `pandas` | Excel file loading and data manipulation |
+| `openpyxl` | Excel file writing with formatting |
+| `pywin32` | Outlook COM automation (`win32com.client`) |
+| `pyinstaller` | Building EmailManager.exe |
+| `tkinter` | EmailManager GUI (built-in) |
 
 ---
 
-## Deployment and Sharing
+## Build and Deployment
 
-### Local Distribution
-1. Share the 3 Python files: `app.py`, `generate_manager_reports.py`, `create_email_drafts.py`
-2. Each user installs dependencies: `pip install streamlit pandas openpyxl pywin32`
-3. Each user runs locally: `streamlit run app.py`
-4. All processing (file I/O, Outlook draft creation) happens on the user's local machine
+### Building EmailManager.exe
 
-### Limitations
-- **Cannot be hosted as a web app** (e.g. GitHub Pages, Streamlit Cloud) because:
-  - Requires local file system access for saving reports
-  - Requires Outlook COM (Windows desktop Outlook) for email drafts
-  - Data files are processed locally, not uploaded to a server
-- Each user must have Microsoft Outlook installed and running on their Windows machine
+```bash
+pip install pyinstaller
+pyinstaller email_manager.spec
+# Output: dist/EmailManager.exe (~13MB)
+```
+
+The `.spec` file excludes heavy packages (pandas, numpy, etc.) not used by EmailManager to reduce file size.
+
+### Deploying Web App
+
+The Streamlit app is deployed on Streamlit Cloud, reading directly from the GitHub repository. All code changes must be pushed to `main` branch to reflect on the live app.
+
+```bash
+git push origin main
+# Streamlit Cloud auto-deploys from main
+# If not auto-deployed, manually reboot from Streamlit Cloud dashboard
+```
+
+### Local Development
+
+```bash
+# Web App
+python -m streamlit run app.py
+
+# EmailManager GUI
+python email_manager.py
+```
 
 ### Git Configuration
-The `.gitignore` excludes all data files (`.xlsx`, `.csv`), generated reports (`Manager report/`), Python cache, IDE files, and Claude Code metadata. Only the Python source files are tracked.
+
+The `.gitignore` excludes data files (`.xlsx`, `.csv`), build artifacts (`build/`), Python cache, and IDE files. `dist/EmailManager.exe` is tracked in git for distribution via the web app.
