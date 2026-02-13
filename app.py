@@ -5,8 +5,6 @@ Step-by-step wizard for generating manager reports and Outlook email drafts.
 
 import os
 import re
-import tkinter as tk
-from tkinter import filedialog
 import pandas as pd
 import streamlit as st
 
@@ -204,19 +202,6 @@ st.title("GSC Attainment Report Automator")
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────
-
-def select_folder_dialog():
-    """Open a native Windows folder picker dialog. Returns path or empty string."""
-    root = tk.Tk()
-    root.withdraw()
-    root.wm_attributes("-topmost", 1)
-    folder = filedialog.askdirectory(
-        title="Select Output Folder",
-        mustexist=False,
-    )
-    root.destroy()
-    return folder
-
 
 def validate_attainment_file(uploaded_file):
     """Validate and load the attainment Excel file. Returns (df, error_msg)."""
