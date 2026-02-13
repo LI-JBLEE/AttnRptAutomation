@@ -197,7 +197,7 @@ class EmailManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GSC Email Manager")
-        self.root.geometry("900x750")
+        self.root.geometry("900x1000")
         self.root.resizable(True, True)
 
         # Data storage
@@ -307,7 +307,7 @@ class EmailManagerApp:
 
         scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
         self.manager_listbox = tk.Listbox(
-            listbox_frame, selectmode=tk.MULTIPLE, height=20,
+            listbox_frame, selectmode=tk.MULTIPLE, height=40,
             yscrollcommand=scrollbar.set
         )
         scrollbar.config(command=self.manager_listbox.yview)
