@@ -200,6 +200,14 @@ st.markdown("""
 
 st.title("GSC Attainment Report Automator")
 
+# ── Reset button (top-right) ─────────────────────────────────────────────────
+_, reset_col = st.columns([8, 1])
+with reset_col:
+    if st.button("🔄 Reset", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
