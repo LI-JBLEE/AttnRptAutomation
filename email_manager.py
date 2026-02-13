@@ -197,7 +197,7 @@ class EmailManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GSC Email Manager")
-        self.root.geometry("900x500")
+        self.root.geometry("900x750")
         self.root.resizable(True, True)
 
         # Data storage
