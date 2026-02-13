@@ -280,34 +280,44 @@ with col2:
         key="sales_comp_uploader",
     )
 
-# Validate attainment file
-if attainment_file is not None and st.session_state.attainment_df is None:
-    with st.spinner("Validating Attainment file..."):
-        df, err = validate_attainment_file(attainment_file)
-        if err:
-            st.error(f"Attainment file error: {err}")
-        else:
-            st.session_state.attainment_df = df
-            st.session_state.available_regions = get_all_regions(df)
-            st.session_state.fiscal_year = get_fiscal_year(df)
+# Track if this is a new file upload (reset when file is uploaded)
+if attainment_file is not None:
+    # Check if this is a new upload by comparing file name or forcing revalidation
+    if st.session_state.attainment_df is None:
+        with st.spinner("Validating Attainment file..."):
+            df, err = validate_attainment_file(attainment_file)
+            if err:
+                st.error(f"Attainment file error: {err}")
+            else:
+                st.session_state.attainment_df = df
+                st.session_state.available_regions = get_all_regions(df)
+                st.session_state.fiscal_year = get_fiscal_year(df)
+                # Reset report generation state on new file
+                st.session_state.reports_generated = False
+                st.session_state.report_results = None
 
 if st.session_state.attainment_df is not None:
     df = st.session_state.attainment_df
     n_managers = df["Level_1_Manager"].dropna().nunique()
     fiscal_year = st.session_state.fiscal_year or "FY26"
+    n_regions = len(st.session_state.available_regions) if st.session_state.available_regions else 0
     st.success(
         f"Attainment file loaded: **{len(df):,}** rows, **{n_managers}** managers, "
-        f"**{fiscal_year}**"
+        f"**{n_regions}** regions, **{fiscal_year}**"
     )
 
 # Validate sales comp file
-if sales_comp_file is not None and st.session_state.email_map is None:
-    with st.spinner("Validating Sales Compensation file..."):
-        email_map, err = validate_sales_comp_file(sales_comp_file)
-        if err:
-            st.error(f"Sales Comp file error: {err}")
-        else:
-            st.session_state.email_map = email_map
+if sales_comp_file is not None:
+    if st.session_state.email_map is None:
+        with st.spinner("Validating Sales Compensation file..."):
+            email_map, err = validate_sales_comp_file(sales_comp_file)
+            if err:
+                st.error(f"Sales Comp file error: {err}")
+            else:
+                st.session_state.email_map = email_map
+                # Reset report generation state on new file
+                st.session_state.reports_generated = False
+                st.session_state.report_results = None
 
 if st.session_state.email_map is not None:
     st.success(f"Sales Comp file loaded: **{len(st.session_state.email_map):,}** email records")
@@ -336,9 +346,20 @@ if files_ready:
                 st.write(f"**{region}**: {count} reports")
     else:
         # Region selection before generation
-        available_regions = st.session_state.available_regions or []
+        available_regions = st.session_state.available_regions
 
-        st.write("Select regions to generate reports for:")
+        if not available_regions:
+            st.error("""
+⚠️ **No regions found in the attainment data.**
+
+Please ensure:
+- The Excel file has a 'Region' column
+- The 'Level_1_Manager' column contains manager names
+- At least one manager has a valid Region value
+            """)
+            st.stop()
+
+        st.write(f"**{len(available_regions)}** regions available. Select which regions to generate reports for:")
         gen_regions = st.multiselect(
             "Regions to generate:",
             options=available_regions,
