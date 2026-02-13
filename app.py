@@ -204,8 +204,11 @@ st.title("GSC Attainment Report Automator")
 _, reset_col = st.columns([8, 1])
 with reset_col:
     if st.button("🔄 Reset", use_container_width=True):
+        # Increment reset counter to force new file_uploader widget keys
+        reset_count = st.session_state.get("reset_count", 0) + 1
         for key in list(st.session_state.keys()):
             del st.session_state[key]
+        st.session_state["reset_count"] = reset_count
         st.rerun()
 
 
@@ -260,9 +263,12 @@ for key, default in [
     ("available_regions", None),
     ("fiscal_year", None),
     ("temp_dir", None),
+    ("reset_count", 0),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+rc = st.session_state.reset_count  # used in widget keys to force re-creation
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -277,7 +283,7 @@ with col1:
     attainment_file = st.file_uploader(
         "Upload the Global Attainment Club Excel file",
         type=["xlsx"],
-        key="attainment_uploader",
+        key=f"attainment_uploader_{rc}",
     )
 
 with col2:
@@ -285,7 +291,7 @@ with col2:
     sales_comp_file = st.file_uploader(
         "Upload the Sales Compensation Report Excel file",
         type=["xlsx"],
-        key="sales_comp_uploader",
+        key=f"sales_comp_uploader_{rc}",
     )
 
 # Track if this is a new file upload (reset when file is uploaded)
