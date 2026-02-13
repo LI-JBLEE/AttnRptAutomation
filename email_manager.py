@@ -160,55 +160,66 @@ def get_drafts_from_folder(outlook, folder_name="Manager Report"):
     return None, []
 
 
-def send_drafts_batch(outlook, folder, draft_items, progress_callback=None):
+def send_drafts_batch(draft_items, progress_callback=None):
     """Send selected draft emails from a folder.
 
     Args:
-        outlook: Outlook COM object
-        folder: Drafts folder object
         draft_items: List of draft item dictionaries with 'entry_id'
         progress_callback: Optional callback function(current, total, message)
+
+    Note:
+        This function creates its own Outlook COM object to avoid threading issues.
+        COM objects must be created and used in the same thread.
     """
     sent = 0
     failed = 0
     failures_detail = []
     total = len(draft_items)
 
-    # Get namespace for GetItemFromID
-    ns = outlook.GetNamespace("MAPI")
+    try:
+        # Create new Outlook COM object in this thread
+        # This is required because COM objects cannot be marshalled across threads
+        import win32com.client
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        ns = outlook.GetNamespace("MAPI")
 
-    # Process each draft item
-    for i, draft_dict in enumerate(draft_items, 1):
-        subject = draft_dict.get("subject", "Unknown")
-        to_addr = draft_dict.get("to", "Unknown")
-        entry_id = draft_dict.get("entry_id")
+        # Process each draft item
+        for i, draft_dict in enumerate(draft_items, 1):
+            subject = draft_dict.get("subject", "Unknown")
+            to_addr = draft_dict.get("to", "Unknown")
+            entry_id = draft_dict.get("entry_id")
 
-        try:
-            # Retrieve the actual mail item using its EntryID
-            # This is the correct way to handle COM objects in Outlook
-            item = ns.GetItemFromID(entry_id)
+            try:
+                # Retrieve the actual mail item using its EntryID
+                # This is the correct way to handle COM objects in Outlook
+                item = ns.GetItemFromID(entry_id)
 
-            # Verify it's still a draft (not already sent)
-            if item.Sent:
-                failed += 1
-                failures_detail.append((subject, "Email already sent"))
+                # Verify it's still a draft (not already sent)
+                if item.Sent:
+                    failed += 1
+                    failures_detail.append((subject, "Email already sent"))
+                    if progress_callback:
+                        progress_callback(i, total, f"SKIPPED: {subject} (already sent)")
+                    continue
+
+                # Send the email
+                item.Send()
+                sent += 1
+
                 if progress_callback:
-                    progress_callback(i, total, f"SKIPPED: {subject} (already sent)")
-                continue
+                    progress_callback(i, total, f"{subject} → {to_addr}")
 
-            # Send the email
-            item.Send()
-            sent += 1
+            except Exception as e:
+                failed += 1
+                failures_detail.append((subject, str(e)))
 
-            if progress_callback:
-                progress_callback(i, total, f"{subject} → {to_addr}")
+                if progress_callback:
+                    progress_callback(i, total, f"FAILED: {subject}")
 
-        except Exception as e:
-            failed += 1
-            failures_detail.append((subject, str(e)))
-
-            if progress_callback:
-                progress_callback(i, total, f"FAILED: {subject}")
+    except Exception as e:
+        # Failed to initialize Outlook
+        failed = total
+        failures_detail.append(("Outlook Connection", str(e)))
 
     return {
         "sent": sent,
@@ -817,9 +828,9 @@ class EmailManagerApp:
                 def progress_callback(current, total, subject):
                     self.root.after(0, lambda s=subject: self._log(f"[{current}/{total}] Sent: {s}"))
 
+                # send_drafts_batch creates its own Outlook COM object in this thread
+                # to avoid "marshalled for a different thread" errors
                 results = send_drafts_batch(
-                    self.outlook,
-                    self.draft_folder,
                     selected_draft_items,
                     progress_callback=progress_callback
                 )
