@@ -467,14 +467,17 @@ Please ensure:
             # Check if EmailManager.exe exists
             exe_path = os.path.join(os.path.dirname(__file__), "dist", "EmailManager.exe")
             if os.path.exists(exe_path):
-                with open(exe_path, "rb") as f:
-                    st.download_button(
-                        label="📧 Download Email Manager",
-                        data=f,
-                        file_name="EmailManager.exe",
-                        mime="application/octet-stream",
-                        use_container_width=True
-                    )
+                # Wrap .exe in .zip to avoid browser download blocking
+                exe_zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(exe_zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(exe_path, "EmailManager.exe")
+                st.download_button(
+                    label="📧 Download Email Manager (.zip)",
+                    data=exe_zip_buffer.getvalue(),
+                    file_name="EmailManager.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
             else:
                 st.button(
                     "📧 Email Manager (not built)",
